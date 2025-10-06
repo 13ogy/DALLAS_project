@@ -1,0 +1,7 @@
+geopandas
+openpyxl
+matplotlib
+seaborn
+scikit-learn
+tabulate
+pandas~=2.1.4
