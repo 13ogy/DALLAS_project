@@ -5,3 +5,5 @@ seaborn
 scikit-learn
 tabulate
 pandas~=2.1.4
+numpy
+holidays
