@@ -205,3 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+/.idea/misc.xml
+/.idea/modules.xml
+/cline/project.md
+/.idea/vcs.xml
+/archive/DALAS_Art_Valuation.pdf
+/archive/DALAS_grammy.pdf
+/cline/course.md
+/.idea/DALLAS_project.iml
+/data/ausgrid_with_weather_normalized.csv
+/data/combined_with_weather_normalized.csv
+/outputs/tables/predictions_next_hour.csv
+/outputs/tables/preds_sample_test.csv

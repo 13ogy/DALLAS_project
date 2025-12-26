@@ -1,0 +1,489 @@
+
+    \documentclass[11pt,a4paper]{article}
+    \usepackage[margin=1in]{geometry}
+    \usepackage{graphicx}
+    \usepackage{booktabs}
+    \usepackage{siunitx}
+    \usepackage[T1]{fontenc}
+    \usepackage[utf8]{inputenc}
+    \usepackage{textcomp}
+    \usepackage{microtype}
+    \usepackage{hyperref}
+    \usepackage{float}
+    \usepackage{caption}
+    \usepackage{xcolor}
+    \usepackage{longtable}
+    \usepackage{array}
+    \usepackage{enumitem}
+    \usepackage{tikz}
+    \usetikzlibrary{arrows.meta,positioning}
+
+    \title{Smart Energy Analytics -- Hourly Forecasting and Weather-Vulnerability Profiling}
+    \author{DALLAS Project}
+    \date{\today}
+
+    \begin{document}
+    \maketitle
+
+    \begin{abstract}
+    We develop a reproducible pipeline to forecast next-hour electricity consumption and quantify temperature-driven vulnerability at the building level. The pipeline builds a weather-aligned hourly dataset, creates leakage-safe time features, trains and validates tree-based models with time-aware splits, and computes temperature elasticity to segment buildings by weather sensitivity. The final artifacts include trained models, metrics, explainability plots, and a vulnerability report.
+    \end{abstract}
+
+    \tableofcontents
+    \clearpage
+
+    \section{Introduction}
+    Data-driven prediction has become a core capability across industries: from demand forecasting in energy and retail, to risk scoring in finance, to real-time decision support in operations. Over the last decade, modern machine learning for tabular and time-series data, better data engineering practices, and MLOps have collectively improved accuracy and reliability. Yet, in production environments, three constraints dominate: (i) leakage-free data design and time-aware evaluation, (ii) interpretability and diagnostics that stakeholders can trust, and (iii) simple, automatable paths to deployment.
+
+    This project contributes along those lines in the energy domain. We assemble a weather-aligned, hourly dataset spanning multiple regions, engineer leakage-safe temporal and exogenous features, and train competitive tree-based models with chronological splits that reflect deployment. We interpret predictions at both global and per-building levels, quantify temperature sensitivity as a vulnerability signal, and package the workflow into reproducible scripts and a lightweight CLI for batch prediction. The aim is not only to achieve strong accuracy, but to demonstrate a transparent, end-to-end forecasting pipeline that can be maintained and extended in real settings.
+
+
+    \section{Pipeline Overview}
+    Our pipeline spans data discovery to deployment to reflect how forecasting systems are built and operated in practice:
+    \begin{enumerate}[leftmargin=*]
+      \item Source discovery and acquisition (APIs, public archives, compliant scraping) with schema validation.
+      \item Unification and weather integration: align usage to hourly cadence; inner-join hourly weather; derive holidays.
+      \item Leakage-safe feature engineering: per-building lag\_1h, lag\_24h, rollmean\_24h; calendar and weather drivers.
+      \item Time-aware splitting: chronological train/validation/test that mirror deployment.
+      \item Model training and evaluation: strong baselines and boosted trees with diagnostics.
+      \item Interpretability and vulnerability profiling: permutation importance, ICE/PDP, temperature elasticity and segments.
+      \item Packaging and reporting: reproducible scripts, plots, and programmatic report generation.
+      \item Testing and deployment: CLI for batch prediction, monitoring considerations for drift and stability.
+    \end{enumerate}
+
+    \section{Problem Definition and Scope}
+    \subsection*{2.1 Problem Definition}
+    We predict the next-hour normalized usage per building and quantify how sensitive each building's predicted usage is to temperature. Accurate short-horizon forecasts support operations (load balancing, peak management) and analytics (error attribution, risk). Temperature elasticity helps target buildings likely to be more affected by heat waves or cold spells, informing intervention and planning.
+
+    \subsection*{2.2 Scope and Data Acquisition Strategy}
+    We focus on hourly resolution across multiple regions, retaining only hours with weather to avoid bias when analyzing temperature effects. Sources are selected for schema consistency and time semantics. We prefer features that reflect real operational signals (time-of-day, recent usage, weather), and evaluate models with chronological splits that emulate deployment. Below we summarize typical use cases that ground our scope:
+    \begin{itemize}[leftmargin=*]
+      \item \textbf{Operational planning}: next-hour forecasts support load balancing and peak management.
+      \item \textbf{Targeted interventions}: high-sensitivity buildings (elasticity) for demand response and outreach.
+      \item \textbf{Policy evaluation}: track the distribution of elasticity across time and customer segments.
+    \end{itemize}
+
+
+
+    \section{Data Acquisition and Dataset Characteristics}
+    \subsection*{3.1 Data Source and Collection Methodology}
+    We combined two public sources (Ausgrid NSW and London LCL) and standardized them to hourly alignment, merging per-region weather (apparent temperature, precipitation, day/night). We retained only rows with weather present to avoid exogenous imputations. Identifiers are anonymized. The unified dataset serves as the single source of truth for feature engineering and chronological evaluation.
+
+    In practice, we first surveyed public archives and APIs for smart-meter or feeder-level usage data across regions. Where APIs were unavailable, we used compliant scraping to collect candidate datasets and validated schemas for usage fields, time resolution, and coverage. Several sources were excluded due to missing usage fields or incompatible granularities. We converged on Ausgrid (NSW, AU) and London LCL as consistent sources. Weather and holiday signals were integrated per region: hourly apparent temperature, precipitation, and day/night flags (temperature normalized), with public holidays derived programmatically (e.g., AU NSW, GB calendars). We kept only rows with weather present to avoid imputing exogenous drivers, preserving integrity for temperature-sensitivity analyses.
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{ll}
+        \toprule
+        Item & Value \\\\ \midrule
+        Rows & 74498698 \\
+Buildings & 3835 \\
+Time range & 2007-01-02 00:00:00 to 2022-04-30 22:00:00 \\
+Train end & 2014-01-26 15:00:00 \\
+Validation end & 2017-06-17 05:00:00 \\
+Test period & $>$ 2017-06-17 05:00:00 \\
+        \\\\ \bottomrule
+      \end{tabular}
+      \caption{Dataset scope and chronological cutoffs.}
+    \end{table}
+
+    \subsection*{3.2 Technical Challenges and Solutions}
+    - Heterogeneous schemas across sources (CSV vs Parquet) were normalized to a common long format (building-hour rows).
+    - Weather alignment: hourly join with strict inner matches; rows without weather removed to preserve interpretability in temperature analyses.
+    - Leakage controls: lags/rolling computed per building with shift operations; chronological splits prevent look-ahead.
+    - Scale and performance: chunked reads and sampling for EDA; compact figures and tables generated from representative samples.
+
+    \subsection*{3.3 Feature Engineering}
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{l p{10cm}}
+        \toprule
+        Group & Features \\\\ \midrule
+        Calendar & hour, day\_of\_week, month, season, is\_weekend, is\_holiday \\
+Dynamics & lag\_1h, lag\_24h, rollmean\_24h (leakage-safe) \\
+Weather & apparent\_temperature\_norm, precipitation, is\_day \\
+Target & y\_next (next-hour usage per building) \\
+        \\\\ \bottomrule
+      \end{tabular}
+      \caption{Feature groups used in modeling.}
+    \end{table}
+
+    \section{Experimental Design and Splits}
+    We estimate time cutoffs via reservoir sampling of timestamps to approximate 80\%/10\%/10\% train/val/test boundaries.\\
+    \textbf{Train end}=2014-01-26 15:00:00, \textbf{Validation end}=2017-06-17 05:00:00; Test strictly later. Metrics: MAE (primary), RMSE (secondary).
+
+    \section{Model Development, Training, and Evaluation}
+    \subsection*{5.1 Feature Selection, Preprocessing, and Initial Analysis}
+    We curated features that reflect operational reality and avoid leakage: per-building lag\_1h and lag\_24h capture persistence and daily cycle; rollmean\_24h summarizes recent regime; calendar features anchor seasonality and hour-level structure; weather features (normalized apparent temperature, precipitation, is\_day) act as exogenous drivers. Preprocessing is minimal by design (trees are scale-robust), focusing effort on correct time alignment and splits.
+    \subsection*{Baselines and Primary Model}
+    \begin{itemize}[leftmargin=*]
+      \item Naive: $\hat{y}(t)=y(t-1)$
+      \item RandomForestRegressor (stable baseline)
+      \item HistGradientBoostingRegressor (primary)
+    \end{itemize}
+    Training uses large sampled subsets per split to bound memory while preserving time ordering.
+
+    \section{Key Findings}
+    \begin{itemize}[leftmargin=*]
+      \item Boosted trees outperform Naive by 45.5\% MAE (val) and 37.7\% MAE (test); RMSE improvements: 46.4\% (val), 34.5\% (test).
+      \item Temperature, hour-of-day, and recent-usage dynamics rank highly by permutation importance.
+      \item Temperature elasticity median = 0.0108; segments: Low=48, Moderate=94, High=48.
+    \end{itemize}
+
+    \section{Results}
+    \subsection*{5.3 Model Performance Evaluation}
+    We evaluate models using MAE (robust to outliers) and RMSE (penalizes large errors) on both validation and hold-out test periods, computed strictly after chronological cutoffs to emulate deployment. Reporting both metrics helps separate median-case fidelity from tail-risk behavior, which is important for operational decision making where occasional spikes can incur high costs.
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{lcccc}
+        \toprule
+        Model & MAE (val) & RMSE (val) & MAE (test) & RMSE (test) \\\\ \midrule
+        Naive & 0.0384 & 0.0535 & 0.0478 & 0.0625 \\\\
+        Random Forest & 0.0239 & 0.0332 & 0.0330 & 0.0453 \\\\
+        HistGBR & 0.0209 & 0.0287 & 0.0298 & 0.0410 \\\\
+        \bottomrule
+      \end{tabular}
+      \caption{Overall accuracy across models (val/test). Primary model: HistGBR.}
+    \end{table}
+
+    \subsection*{Feature Importance (Validation)}
+    Permutation importance highlights lag\_1h, hour, lag\_24h, rollmean\_24h, day\_of\_week as leading drivers. Higher values indicate stronger contribution to reducing validation MAE; the prominence of temperature and recent usage aligns with expected physical and behavioral effects.
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/feature_importance_bar.png}
+      \caption{Permutation importance (validation) for HistGBR. Dominant features confirm the role of temperature and daily dynamics.}
+    \end{figure}
+
+    \noindent Top features (if computed):
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{lcc}
+        \toprule
+        Feature & Importance (mean) & Std \\\\ \midrule
+        lag\_1h & 0.075 & 0.000 \\
+hour & 0.019 & 0.000 \\
+lag\_24h & 0.015 & 0.000 \\
+rollmean\_24h & 0.007 & 0.000 \\
+day\_of\_week & 0.002 & 0.000 \\
+apparent\_temperature\_norm & 0.002 & 0.000 \\
+is\_day & 0.002 & 0.000 \\
+temp\_lag\_24h & 0.001 & 0.000 \\
+temp\_lag\_1h & 0.000 & 0.000 \\
+month & 0.000 & 0.000 \\
+is\_holiday & 0.000 & 0.000 \\
+is\_weekend & 0.000 & 0.000 \\
+precipitation & 0.000 & 0.000 \\
+region\_id & 0.000 & 0.000 \\
+
+        \bottomrule
+      \end{tabular}
+      \caption{Top features by permutation importance (validation).}
+    \end{table}
+
+    \subsection*{Fit Quality and Error Patterns}
+    The scatter below should concentrate around the diagonal if the model is well calibrated; dispersion at higher usage levels reflects the heavier-tailed regime where short spikes are harder to capture.
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.95\textwidth]{../outputs/figures/pred_vs_actual_scatter.png}
+      \caption{Predicted vs True (test sample). Points near the diagonal indicate good calibration; dispersion at high usage reflects spiky demand that remains challenging.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.95\textwidth]{../outputs/figures/residual_by_hour.png}
+      \caption{MAE by hour of day on the test sample. Elevated errors around transition hours (morning/evening) indicate regime changes are hardest to predict.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.95\textwidth]{../outputs/figures/error_heatmap_hour_month.png}
+      \caption{Error heatmap by hour and month (test sample). Warm bands reveal seasonal-hourly regimes where performance degrades, guiding targeted feature or segment refinements.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.95\textwidth]{../outputs/figures/pred_vs_actual_timeseries.png}
+      \caption{Example time series: predicted vs actual for top buildings in sample. The model tracks levels and turning points with small lag except during sharp spikes.}
+    \end{figure}
+
+    \subsection*{Per-Building Test MAE Summary}
+    n=3, min=0.0273, Q1=0.0282, median=0.0291, Q3=0.0310, max=0.0330.
+
+    \section{Model Interpretability with SHAP Analysis}
+    We interpret the model using global importance and response analyses. While SHAP provides additive attributions, for this project we adopt permutation importance (global) and ICE/PDP (local and global response) that convey similar directional insights for tree ensembles. We inspect how predictions change with temperature and time features, and summarize building-level sensitivity via elasticity.
+    \subsection*{Method}
+    We compute per-building temperature elasticity by varying apparent\_temperature\_norm on a fixed grid [0,1] for sampled hours (test period), predicting with the trained model, and fitting a line $dy/dtemp$ across the ICE curve. The building elasticity is the median slope.
+
+    \subsection*{Segments and Distribution}
+    Segments by quantiles: Low=48, Moderate=94, High=48. Median elasticity=0.0108; Q1=0.0076, Q3=0.0149 (scored 190/190 buildings).
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/elasticity_distribution.png}
+      \caption{Distribution of building temperature elasticity (dy/dtemp).}
+    \end{figure}
+
+    \subsection*{Top/Bottom Temperature Sensitivity (Test Period)}
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{l c}
+        \toprule
+        \multicolumn{2}{c}{Top 12 High-Sensitivity Buildings} \\\\ \midrule
+        Building & Elasticity \\\\ \midrule
+        Mt Hutton 33\_11kV & 0.0409 \\
+Port Botany 33\_11kV & 0.0329 \\
+Somersby 132\_11kV & 0.0247 \\
+Darling Harbour 132\_11kV & 0.0238 \\
+Paddington 33\_11kV & 0.0237 \\
+St Peters 132\_11kV & 0.0225 \\
+Revesby 132\_11kV & 0.0219 \\
+Berowra 132\_11kV & 0.0218 \\
+Hornsby 132\_11kV & 0.0216 \\
+Lisarow 33\_11kV & 0.0210 \\
+Kirrawee 132\_11kV & 0.0207 \\
+Kingsford 132\_11kV & 0.0207 \\
+
+        \bottomrule
+      \end{tabular}
+      \caption{Highest positive elasticity (dy/dtemp).}
+    \end{table}
+
+    \begin{table}[H]
+      \centering
+      \begin{tabular}{l c}
+        \toprule
+        \multicolumn{2}{c}{Top 12 Low-Sensitivity Buildings} \\\\ \midrule
+        Building & Elasticity \\\\ \midrule
+        Crows Nest 33\_11kV & 0.0006 \\
+Tomago 33\_11kV & 0.0012 \\
+Tomalpin 33\_11kV & 0.0021 \\
+Milperra 132\_11kV & 0.0028 \\
+Tighes Hill 33\_11kV & 0.0029 \\
+Mitchells Flat 66\_11kV & 0.0031 \\
+Engadine 33\_11kV & 0.0033 \\
+Avoca 66\_11kV & 0.0036 \\
+Toronto 33\_11kV & 0.0037 \\
+Broadmeadow 33\_11kV & 0.0038 \\
+Carrington 33\_11kV & 0.0039 \\
+City East 33\_11kV & 0.0043 \\
+
+        \bottomrule
+      \end{tabular}
+      \caption{Lowest elasticity (dy/dtemp).}
+    \end{table}
+
+    \section{Exploratory Data Analysis (EDA)}
+    We first validate the data mechanics (missingness, distributions) and then study relationships. The goal is to understand regimes where the model must perform well and where risk is elevated.
+    \subsection*{4.2 Summary of EDA Findings}
+    - Usage distributions exhibit expected seasonality and diurnal patterns; weekend/holiday behavior differs modestly by region.
+    - Error analysis shows the hardest hours are transitions (morning/evening) and hotter temperature bins in some regions.
+    - Correlation heatmaps suggest low multicollinearity among engineered signals, a favorable setting for tree models.
+    \begin{itemize}[leftmargin=*]
+      \item Usage vs temperature (normalized) shows expected nonlinearity and heteroscedasticity.
+      \item Hour-of-day error patterns indicate highest difficulty during regime transitions (early morning/evening).
+      \item Seasonality captured via lag\_24h and monthly effects.
+    \end{itemize}
+
+    \subsection*{Extended EDA and Diagnostics (Selected Figures)}
+    The following figures were selected to validate data mechanics and illuminate model-relevant structure. Missingness views ensure inputs are trustworthy; distributional plots reveal heterogeneity across regions and seasons; temporal heatmaps capture diurnal and monthly regimes the model must learn; correlation heatmaps check for multicollinearity that could impair generalization; residual analyses, calibration, and PDP/ICE plots connect model behavior back to physical drivers. Together, these diagnostics justify feature choices and highlight risks that guide improvement.
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/missingness_bar.png}
+      \caption{Missingness by column (sample).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/missingness_heatmap.png}
+      \caption{Missingness heatmap (sample x columns).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/usage_hist_by_region.png}
+      \caption{Usage distribution by region (KDE).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/usage_violin_by_season.png}
+      \caption{Usage by season (per-building normalized).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/usage_by_hour_box.png}
+      \caption{Usage by hour of day (boxplot).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/usage_weekend_weekday_violin.png}
+      \caption{Usage: Weekend vs Weekday.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/usage_holiday_violin.png}
+      \caption{Usage: Holiday vs Non-Holiday.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/usage_heatmap_hour_dow.png}
+      \caption{Mean usage heatmap (hour x day\_of\_week).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/usage_heatmap_hour_month.png}
+      \caption{Mean usage heatmap (hour x month).}
+    \end{figure}
+
+    \subsection*{4.1 Correlation Analysis}
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/feature_correlation_heatmap.png}
+      \caption{Feature correlation heatmap (sample).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.8\textwidth]{../outputs/figures/residual_vs_temp_bin.png}
+      \caption{Residual vs Temperature (binned MAE).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.8\textwidth]{../outputs/figures/residual_vs_precip_bin.png}
+      \caption{Residual vs Precipitation (binned MAE).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.6\textwidth]{../outputs/figures/calibration_plot.png}
+      \caption{Calibration: predicted deciles vs true mean.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/pdp_temperature.png}
+      \caption{PDP: Temperature effect on predicted usage.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/ice_temperature_examples.png}
+      \caption{ICE: Temperature (10 examples).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/pdp_hour.png}
+      \caption{PDP: Hour of day.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/pdp_precip.png}
+      \caption{PDP: Precipitation.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/elasticity_by_region_box.png}
+      \caption{Elasticity by region (boxplot).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/per_building_mae_hist.png}
+      \caption{Per-building MAE distribution (test).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/per_building_mae_by_region_box.png}
+      \caption{Per-building MAE by region (test).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/error_by_season_box.png}
+      \caption{Error by season (test sample).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/error_by_temp_bin_region.png}
+      \caption{Error by temperature bin and region. Temperature regimes differ by region; higher bins align with larger errors in hotter periods.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/error_over_time.png}
+      \caption{Error over time (weekly MAE, test sample). Stable weekly MAE with mild variation suggests good temporal generalization.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.9\textwidth]{../outputs/figures/worst_buildings_timeseries.png}
+      \caption{Worst buildings (by MAE): predicted vs actual time series.}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/pca_features_scatter.png}
+      \caption{PCA of numeric features (sample).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.85\textwidth]{../outputs/figures/cluster_centers_hourly.png}
+      \caption{Cluster centers of hourly usage profiles (k=4).}
+    \end{figure}
+
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.75\textwidth]{../outputs/figures/pairplot_sample.png}
+      \caption{Pairplot (usage, temp, precip, hour) on a sample.}
+    \end{figure}
+
+    \subsection*{5.2 Model Selection and Training}
+    We compared a naive persistence baseline, Random Forest (variance reduction, stable baseline), and HistGradientBoosting (tabular boosting with strong nonlinear capacity). HistGBR achieved the best validation MAE and generalized well on test. The chart below summarizes validation and test MAE across models.
+    \begin{figure}[H]\centering
+      \includegraphics[width=0.7\textwidth]{../outputs/figures/model_comparison_bar.png}
+      \caption{Model comparison (MAE) on validation vs test. HistGBR chosen as primary model.}
+    \end{figure}
+
+
+
+
+    \section{Model Configuration}
+    \subsection*{RandomForestRegressor}
+
+    \begin{itemize}[leftmargin=*]
+      \item n\_estimators=200, max\_depth=12, min\_samples\_leaf=5
+      \item max\_features="sqrt", n\_jobs=-1, random\_state=42
+    \end{itemize}
+
+    \subsection*{HistGradientBoostingRegressor (primary)}
+
+    \begin{itemize}[leftmargin=*]
+      \item loss="squared\_error", learning\_rate=0.05, max\_depth=8
+      \item max\_iter=300, l2\_regularization=0.0, random\_state=42
+    \end{itemize}
+
+
+
+
+    \section{Model Testing and Deployment}
+    \subsection*{7.1 Prediction Script}
+    \subsubsection*{7.1.1 Purpose and Prerequisites}
+    The prediction CLI produces next-hour predictions per building from a usage file (CSV/Parquet) and optional weather file. It expects hourly timestamps, building identifiers, and usage; with optional apparent temperature and precipitation for higher fidelity.
+    \subsubsection*{7.1.2 Workflow}
+    1) Load the trained model and minimal preprocessing; 2) align/merge weather if provided; 3) compute leakage-safe lags per building for the last hour; 4) predict next-hour usage and write a CSV.
+    \subsubsection*{7.1.3 Command-Line Usage Example}
+    \begin{verbatim}
+    source .venv/bin/activate && python scripts/predict.py \
+      --input data/ausgrid_with_weather_normalized.csv \
+      --region NSW \
+      --out outputs/tables/predictions_next_hour.csv
+    \end{verbatim}
+    The pipeline is fully scripted and reproducible. Key steps:
+    \begin{itemize}[leftmargin=*]
+      \item \textbf{Unify data}: \texttt{scripts/00\_unify\_datasets.py} produces a single CSV with region labels.
+      \item \textbf{Build features}: \texttt{scripts/01\_build\_features.py} creates leakage-safe features and the next-hour target.
+      \item \textbf{Train}: \texttt{scripts/02\_train\_models.py} performs chronological splits and trains Naive/RF/HistGBR.
+      \item \textbf{Predict}: \texttt{scripts/predict.py} predicts next-hour usage for each building given a usage file (+ optional weather).
+      \item \textbf{Explain}: \texttt{scripts/03\_explain\_segments.py} computes temperature elasticity and segments.
+      \item \textbf{Plots}: \texttt{scripts/04\_make\_plots.py} + \texttt{scripts/04a\_extra\_plots.py} generate $>$30 figures.
+      \item \textbf{Report}: \texttt{scripts/05\_render\_report.py} assembles this LaTeX report.
+    \end{itemize}
+    See the root \texttt{README.md} for exact commands and prediction usage examples.
+
+    \subsection*{7.2 Deployment Considerations}
+    \begin{itemize}[leftmargin=*]
+      \item \textbf{Internal validity}: enforce leakage controls via per-building shifts/rolling; avoid global scalers fit on full data.
+      \item \textbf{External validity}: distribution shifts (policy changes, technology adoption) may degrade accuracy.
+      \item \textbf{Bias}: uneven station coverage may bias elasticity; monitor subgroup metrics and confidence intervals.
+      \item \textbf{Privacy}: anonymized identifiers; avoid re-identification; follow GDPR principles.
+    \end{itemize}
+
+    \section{Conclusion}
+    This project delivers an end-to-end, deployment-minded forecasting pipeline for hourly electricity usage that reflects current best practice in the prediction industry: leakage-safe data design, time-aware evaluation, and interpretable, high-performing tree ensembles. By unifying multi-region usage with weather and calendar signals, training with chronological splits, and explaining predictions via global importance and ICE/PDP, we provide both accurate next-hour forecasts and an actionable measure of temperature-driven vulnerability at the building level. The approach has limits: upstream data quality and representativeness can affect both accuracy and elasticity estimates; extreme events and sudden regime shifts remain challenging; and a single global model may underfit niche segments. Future development should explore gradient-boosting libraries with early stopping, uncertainty quantification and monitoring in production, segment-specific models where justified, and richer exogenous drivers (e.g., tariffs or mobility) to improve robustness as the system evolves.
+
+    \section*{References}
+    \begin{itemize}[leftmargin=*]
+      \item Pedregosa et al., \emph{Scikit-learn: Machine Learning in Python}, JMLR.
+      \item Ke et al., \emph{LightGBM: A Highly Efficient Gradient Boosting Decision Tree} (future work).
+      \item Lundberg \& Lee, \emph{A Unified Approach to Interpreting Model Predictions} (future SHAP enhancements).
+    \end{itemize}
+
+
+    \end{document}

@@ -1,0 +1,12 @@
+{
+  "n_buildings": 190,
+  "n_with_scores": 190,
+  "median_elasticity": 0.010809940167694553,
+  "q25_elasticity": 0.0076288958623017475,
+  "q75_elasticity": 0.014899254570925006,
+  "segments_count": {
+    "Moderate": 94,
+    "Low": 48,
+    "High": 48
+  }
+}
