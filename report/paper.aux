@@ -18,46 +18,48 @@
 \@writefile{toc}{\contentsline {section}{\numberline {2}Pipeline Overview}{2}{section.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {3}Problem Definition and Scope}{2}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Problem Definition}{2}{subsection.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Scope and Data Acquisition Strategy}{3}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Scope and Data Acquisition Strategy}{2}{subsection.3.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {4}Data Acquisition and Dataset Characteristics}{3}{section.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Data Source and Collection Methodology}{3}{subsection.4.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Dataset scope and chronological cutoffs.\relax }}{4}{table.caption.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Technical Challenges and Solutions}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Dataset scope and chronological cutoffs.\relax }}{3}{table.caption.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Technical Challenges and Solutions}{3}{subsection.4.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Feature Engineering}{4}{subsection.4.3}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Feature groups used in modeling.\relax }}{4}{table.caption.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Weather Normalization}{4}{section*.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {5}Experimental Design and Splits}{4}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Model Development, Training, and Evaluation}{5}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Feature Selection, Preprocessing, and Initial Analysis}{5}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Baselines and Primary Model}{5}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Model Development, Training, and Evaluation}{4}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Feature Selection, Preprocessing, and Initial Analysis}{4}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Baselines and Primary Model}{4}{subsection.6.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {7}Key Findings}{5}{section.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {8}Results}{5}{section.8}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Model Performance Evaluation}{5}{subsection.8.1}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Overall accuracy across models (val/test). Primary model: HistGBR.\relax }}{5}{table.caption.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Feature Importance (Validation)}{6}{subsection.8.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:model_performance}{{3}{5}{Overall accuracy across models (val/test). Primary model: HistGBR.\relax }{table.caption.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Feature Importance (Validation)}{5}{subsection.8.2}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Permutation importance (validation) for HistGBR. Dominant features confirm the role of temperature and daily dynamics.\relax }}{6}{figure.caption.7}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Top features by permutation importance (validation).\relax }}{6}{table.caption.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Fit Quality and Error Patterns}{7}{subsection.8.3}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Predicted vs True (test sample). Points near the diagonal indicate good calibration; dispersion at high usage reflects spiky demand that remains challenging.\relax }}{7}{figure.caption.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Fit Quality and Error Patterns}{6}{subsection.8.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Predicted vs True (test sample).Points concentrate near the diagonal, while dispersion increases at higher usage levels, reflecting short-term demand spikes.\relax }}{7}{figure.caption.9}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces MAE by hour of day on the test sample. Elevated errors around transition hours (morning/evening) indicate regime changes are hardest to predict.\relax }}{8}{figure.caption.10}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Error heatmap by hour and month (test sample). Warm bands reveal seasonal-hourly regimes where performance degrades, guiding targeted feature or segment refinements.\relax }}{8}{figure.caption.11}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Example time series: predicted vs actual for top buildings in sample. The model tracks levels and turning points with small lag except during sharp spikes.\relax }}{9}{figure.caption.12}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Summary of prediction behavior}{9}{section*.13}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Per-Building Test MAE Summary}{9}{subsection.8.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {9}Model Interpretability with SHAP Analysis}{9}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Model Interpretability via Permutation Importance and PDP/ICE}{9}{section.9}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Method}{9}{subsection.9.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Segments and Distribution}{10}{subsection.9.2}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Distribution of building temperature elasticity (dy/dtemp).\relax }}{10}{figure.caption.14}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Top/Bottom Temperature Sensitivity (Test Period)}{10}{subsection.9.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Highest positive elasticity (dy/dtemp).\relax }}{10}{table.caption.15}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Highest positive elasticity (dy/dtemp).\relax }}{11}{table.caption.15}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Lowest elasticity (dy/dtemp).\relax }}{11}{table.caption.16}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {10}Exploratory Data Analysis (EDA)}{11}{section.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{10.1 How to read the EDA figures}{11}{section*.17}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Summary of EDA Findings}{11}{subsection.10.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Extended EDA and Diagnostics (Selected Figures)}{11}{subsection.10.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{How to read the EDA figures}{11}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Summary of EDA Findings}{12}{subsection.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Extended EDA and Diagnostics (Selected Figures)}{12}{subsection.10.2}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Missingness by column (sample).\relax }}{12}{figure.caption.18}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Missingness heatmap (sample x columns).\relax }}{12}{figure.caption.19}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Takeaway (Missingness)}{12}{section*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Takeaway (Missingness)}{13}{section*.20}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Usage distribution by region (KDE).\relax }}{13}{figure.caption.21}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Usage by season (per-building normalized).\relax }}{13}{figure.caption.22}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Usage by hour of day (boxplot).\relax }}{14}{figure.caption.23}\protected@file@percent }
@@ -88,18 +90,18 @@
 \@writefile{toc}{\contentsline {paragraph}{Why PCA and clustering are included}{23}{section*.47}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {32}{\ignorespaces Cluster centers of hourly usage profiles (k=4).\relax }}{24}{figure.caption.48}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {33}{\ignorespaces Pairplot (usage, temp, precip, hour) on a sample.\relax }}{24}{figure.caption.49}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Implications for modeling}{25}{section*.50}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {10.4}Model Selection and Training}{25}{subsection.10.4}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {34}{\ignorespaces Model comparison (MAE) on validation vs test. HistGBR chosen as primary model.\relax }}{25}{figure.caption.51}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Overall implication of EDA}{25}{section*.52}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {34}{\ignorespaces Model comparison (MAE) on validation vs test. HistGBR chosen as primary model.\relax }}{25}{figure.caption.50}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{EDA implication}{25}{section*.51}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {11}Model Configuration}{25}{section.11}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {11.1}RandomForestRegressor}{25}{subsection.11.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {11.2}HistGradientBoostingRegressor (primary)}{25}{subsection.11.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {12}Model Testing and Deployment}{26}{section.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Prediction Script}{26}{subsection.12.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {12.1.1}Purpose and Prerequisites}{26}{subsubsection.12.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {12.1.2}Workflow}{26}{subsubsection.12.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}Model Testing and Deployment}{25}{section.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Prediction Script}{25}{subsection.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {12.1.1}Purpose and Prerequisites}{25}{subsubsection.12.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {12.1.2}Workflow}{25}{subsubsection.12.1.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {12.1.3}Command-Line Usage Example}{26}{subsubsection.12.1.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {12.2}Deployment Considerations}{26}{subsection.12.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {13}Conclusion}{27}{section.13}\protected@file@percent }
-\gdef \@abspage@last{27}
+\@writefile{toc}{\contentsline {section}{\numberline {13}Conclusion}{26}{section.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implications for modeling}{26}{section*.52}\protected@file@percent }
+\gdef \@abspage@last{26}
