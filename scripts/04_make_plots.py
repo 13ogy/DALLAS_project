@@ -27,7 +27,7 @@ import seaborn as sns
 FIG_DIR = Path("outputs/figures")
 TAB_DIR = Path("outputs/tables")
 DATA_FEATURES = Path("data/processed/features.csv")
-FI_CSV = TAB_DIR / "feature_importance_permutation_val.csv"
+FI_CSV = TAB_DIR / "feature_importance_permutation_test.csv"
 PREDS_SAMPLE_CSV = TAB_DIR / "preds_sample_test.csv"
 
 
@@ -43,7 +43,7 @@ def feature_importance_bar():
     fi = fi.sort_values("importance_mean", ascending=True)
     plt.figure(figsize=(7, 4.5))
     plt.barh(fi["feature"], fi["importance_mean"], xerr=fi["importance_std"], color="#3b7ddd", alpha=0.85)
-    plt.xlabel("Permutation Importance (val, higher is more important)")
+    plt.xlabel("Permutation Importance (test, higher is more important)")
     plt.tight_layout()
     out = FIG_DIR / "feature_importance_bar.png"
     plt.savefig(out, dpi=150)
@@ -134,7 +134,8 @@ def preds_based_plots():
 
 def usage_vs_temp_scatter(max_points: int = 100_000, chunksize: int = 500_000):
     """
-    Build a usage vs temperature scatter from features.csv without loading full file.
+    Build a usage vs temperature (z-score) scatter from features.csv without loading full file.
+    Keeps it simple: random subsample and clear labels.
     """
     if not DATA_FEATURES.exists():
         print(f"Skip usage_vs_temp_scatter: {DATA_FEATURES} not found")
@@ -142,7 +143,7 @@ def usage_vs_temp_scatter(max_points: int = 100_000, chunksize: int = 500_000):
 
     used = 0
     parts = []
-    usecols = ["usage_pb", "apparent_temperature_norm"]
+    usecols = ["usage_pb", "temp_z"]
     for chunk in pd.read_csv(DATA_FEATURES, usecols=usecols, chunksize=chunksize, low_memory=False):
         chunk = chunk.dropna(subset=usecols)
         if chunk.empty:
@@ -162,10 +163,10 @@ def usage_vs_temp_scatter(max_points: int = 100_000, chunksize: int = 500_000):
 
     df = pd.concat(parts, ignore_index=True)
     plt.figure(figsize=(6, 5))
-    plt.scatter(df["apparent_temperature_norm"], df["usage_pb"], s=4, alpha=0.15, color="#9467bd", edgecolors="none")
-    plt.xlabel("Apparent temperature (norm)")
+    plt.scatter(df["temp_z"], df["usage_pb"], s=4, alpha=0.15, color="#9467bd", edgecolors="none")
+    plt.xlabel("Temperature (z-score)")
     plt.ylabel("Usage (per-building norm)")
-    plt.title("Usage vs Temperature (random subsample)")
+    plt.title("Usage vs Temperature (z-score, subsample)")
     plt.tight_layout()
     out = FIG_DIR / "usage_vs_temp_scatter.png"
     plt.savefig(out, dpi=150)

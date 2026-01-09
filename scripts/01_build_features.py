@@ -45,7 +45,7 @@ def per_building_minmax(series: pd.Series) -> pd.Series:
     return (s - min_v) / denom
 
 
-def build_features(input_csv: str, output_base: str = "data/processed/features") -> dict:
+def build_features(input_csv: str, output_base: str = "data/processed/features", verify_leakage: bool = False) -> dict:
     ensure_dirs()
 
     print(f"Reading input CSV: {input_csv}")
@@ -55,7 +55,7 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
     df = df.sort_values(["building_name", "full_timestamp"]).reset_index(drop=True)
 
     # Coerce numeric columns
-    for c in ["usage_kwh_norm", "apparent_temperature_norm", "precipitation"]:
+    for c in ["usage_kwh_norm", "apparent_temperature", "apparent_temperature_norm", "precipitation"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -64,8 +64,11 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(np.int8)
 
-    # Drop rows without timestamps or required numeric cols
-    df = df.dropna(subset=["full_timestamp", "usage_kwh_norm", "apparent_temperature_norm"]).copy()
+    # Drop rows without timestamps or required numeric cols (prefer raw temperature if available)
+    temp_req_col = "apparent_temperature" if "apparent_temperature" in df.columns else "apparent_temperature_norm"
+    if temp_req_col not in df.columns:
+        raise ValueError("No temperature column found in input (expected 'apparent_temperature' or 'apparent_temperature_norm').")
+    df = df.dropna(subset=["full_timestamp", "usage_kwh_norm", temp_req_col]).copy()
 
     # Region handling (categorical + encoded)
     if "region" not in df.columns:
@@ -83,6 +86,27 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         .astype(np.float32)
     )
 
+    # Global temperature standardization (z-score across entire dataset)
+    if "apparent_temperature" in df.columns and df["apparent_temperature"].notna().sum() > 0:
+        temp_series = df["apparent_temperature"].dropna()
+        temp_mean = temp_series.mean()
+        temp_std = temp_series.std()
+        if temp_std > 0:
+            df["temp_z"] = (df["apparent_temperature"] - temp_mean) / temp_std
+            df["temp_z"] = df["temp_z"].astype(np.float32)
+        else:
+            df["temp_z"] = 0.0
+    else:
+        # Fallback to norm if raw not available (but prefer raw)
+        temp_series = df["apparent_temperature_norm"].dropna()
+        temp_mean = temp_series.mean()
+        temp_std = temp_series.std()
+        if temp_std > 0:
+            df["temp_z"] = (df["apparent_temperature_norm"] - temp_mean) / temp_std
+        else:
+            df["temp_z"] = 0.0
+        df["temp_z"] = df["temp_z"].astype(np.float32)
+
     # Calendar features
     df["hour"] = df["full_timestamp"].dt.hour.astype(np.int8)
     df["day_of_week"] = df["full_timestamp"].dt.dayofweek.astype(np.int8)
@@ -95,12 +119,17 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
     # Lags and rolling (exclude current hour via shift(1))
     df["lag_1h"] = g["usage_pb"].shift(1).astype(np.float32)
     df["lag_24h"] = g["usage_pb"].shift(24).astype(np.float32)
+    # Add weekly lag
+    df["lag_168h"] = g["usage_pb"].shift(168).astype(np.float32)
     # Rolling 24h mean of prior hours
     df["rollmean_24h"] = (
         g["usage_pb"].apply(lambda s: s.shift(1).rolling(window=24, min_periods=24).mean())
     ).astype(np.float32)
 
-    # Temperature lags (leakage-safe, per building)
+    # Temperature lags (leakage-safe, per building) - now using temp_z
+    df["temp_z_lag_1h"] = g["temp_z"].shift(1).astype(np.float32)
+    df["temp_z_lag_24h"] = g["temp_z"].shift(24).astype(np.float32)
+    # Keep legacy if needed
     if "apparent_temperature_norm" in df.columns:
         df["temp_lag_1h"] = g["apparent_temperature_norm"].shift(1).astype(np.float32)
         df["temp_lag_24h"] = g["apparent_temperature_norm"].shift(24).astype(np.float32)
@@ -108,9 +137,36 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
     # Target: next-hour usage per building
     df["y_next"] = g["usage_pb"].shift(-1).astype(np.float32)
 
+    # Optional leakage verification
+    if verify_leakage:
+        print("Performing leakage verification...")
+        # Check that rollmean_24h excludes current hour
+        sample_checks = []
+        for bld in df["building_name"].drop_duplicates().sample(min(5, df["building_name"].nunique()), random_state=42):
+            sub = df[df["building_name"] == bld].sort_values("full_timestamp")
+            if len(sub) < 25:
+                continue
+            idx = len(sub) // 2  # Middle row
+            row = sub.iloc[idx]
+            ts = row["full_timestamp"]
+            roll_val = row["rollmean_24h"]
+            # Compute manual rollmean of prior 24 hours
+            prior_24 = sub[(sub["full_timestamp"] < ts) & (sub["full_timestamp"] >= ts - pd.Timedelta(hours=24))]
+            if len(prior_24) >= 24:
+                manual_roll = prior_24["usage_pb"].mean()
+                sample_checks.append(abs(roll_val - manual_roll) < 1e-6)
+        if sample_checks:
+            if all(sample_checks):
+                print(f"✓ Leakage verification passed on {len(sample_checks)} sample checks")
+            else:
+                print(f"✗ Leakage verification FAILED on {len(sample_checks)} sample checks")
+                raise ValueError("Data leakage detected in rolling features!")
+        else:
+            print("! Leakage verification: insufficient data for checks")
+
     # Feature selection and cleaning
     required_cols = ["lag_1h", "lag_24h", "rollmean_24h", "y_next",
-                     "apparent_temperature_norm"]
+                     "temp_z"]  # Prioritize temp_z over norm
     df = df.dropna(subset=[c for c in required_cols if c in df.columns]).copy()
 
     # Downcast numerics to save space
@@ -123,11 +179,12 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         "building_name", "full_timestamp",
         "region", "region_id",
         "usage_kwh_norm_orig", "usage_pb",
+        "apparent_temperature", "temp_z", "temp_z_lag_1h", "temp_z_lag_24h",
         "apparent_temperature_norm", "temp_lag_1h", "temp_lag_24h",
         "precipitation", "is_day",
         "is_holiday", "is_weekend",
         "hour", "day_of_week", "month", "season",
-        "lag_1h", "lag_24h", "rollmean_24h",
+        "lag_1h", "lag_24h", "lag_168h", "rollmean_24h",
         "y_next"
     ]
     cols = [c for c in preferred if c in df.columns] + [c for c in df.columns if c not in preferred]
@@ -179,7 +236,11 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
             "usage_pb": "Per-building MinMax re-normalized usage (0-1 within building)"
         },
         "weather": {
-            "apparent_temperature_norm": "Normalized apparent temperature (global, from source)",
+            "apparent_temperature": "Raw apparent temperature (Celsius, if available)",
+            "temp_z": "Global z-score standardized temperature (across all buildings)",
+            "temp_z_lag_1h": "temp_z previous hour",
+            "temp_z_lag_24h": "temp_z same hour previous day",
+            "apparent_temperature_norm": "Legacy normalized apparent temperature (global, from source)",
             "precipitation": "Hourly precipitation (sum)",
             "is_day": "1 if daylight hour else 0",
             "temp_lag_1h": "Apparent temperature (normalized) previous hour",
@@ -198,6 +259,7 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         "dynamics": {
             "lag_1h": "Usage (usage_pb) previous hour",
             "lag_24h": "Usage (usage_pb) same hour previous day",
+            "lag_168h": "Usage (usage_pb) same hour previous week",
             "rollmean_24h": "Mean of last 24 hours of usage_pb (excluding current hour)"
         },
         "stats": {
@@ -232,7 +294,11 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         "- usage_pb: Per-building MinMax re-normalized usage (0-1 within building)",
         "",
         "## Weather",
-        "- apparent_temperature_norm: Normalized apparent temperature (global, from source)",
+        "- apparent_temperature: Raw apparent temperature (Celsius, if available)",
+        "- temp_z: Global z-score standardized temperature (across all buildings)",
+        "- temp_z_lag_1h: temp_z previous hour",
+        "- temp_z_lag_24h: temp_z same hour previous day",
+        "- apparent_temperature_norm: Legacy normalized apparent temperature (global, from source)",
         "- precipitation: Hourly precipitation (sum)",
         "- is_day: 1 if daylight hour else 0",
         "- temp_lag_1h: Apparent temperature (normalized) previous hour",
@@ -251,6 +317,7 @@ def build_features(input_csv: str, output_base: str = "data/processed/features")
         "## Dynamics",
         "- lag_1h: Usage (usage_pb) previous hour",
         "- lag_24h: Usage (usage_pb) same hour previous day",
+        "- lag_168h: Usage (usage_pb) same hour previous week",
         "- rollmean_24h: Mean of last 24 hours of usage_pb (excluding current hour)",
         "",
         "## Stats",
@@ -275,9 +342,11 @@ def main():
                         help="Path to input CSV")
     parser.add_argument("--out", type=str, default="data/processed/features",
                         help="Output base path without extension")
+    parser.add_argument("--verify-leakage", action="store_true",
+                        help="Perform optional leakage verification on rolling features")
     args = parser.parse_args()
 
-    info = build_features(args.input, args.out)
+    info = build_features(args.input, args.out, args.verify_leakage)
     # Print compact summary
     print(json.dumps({"rows": info["stats"]["rows"],
                       "unique_buildings": info["stats"]["unique_buildings"],

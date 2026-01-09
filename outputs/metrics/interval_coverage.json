@@ -1,0 +1,10 @@
+{
+  "80%": {
+    "half_width": 0.07750041061885315,
+    "method": "empirical_residual_std"
+  },
+  "95%": {
+    "half_width": 0.11867250376011888,
+    "method": "empirical_residual_std"
+  }
+}

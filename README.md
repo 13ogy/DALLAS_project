@@ -5,12 +5,13 @@ This repository builds an hourly, weather-aligned dataset from multiple sources 
 Project map
 - scripts/
   - 00_unify_datasets.py — Unify multi-source inputs into a single CSV with region label (NSW/LCL). Enforces hourly alignment and retains rows with weather present only.
-  - 01_build_features.py — Leakage-safe features per building: lags, rolling means, calendar, weather, region_id; defines y_next (t+1).
-  - 02_train_models.py — Time-aware splits from timestamps; trains Naive, RandomForest, HistGradientBoosting; saves metrics, models, tables.
-  - 03_explain_segments.py — Computes per-building temperature elasticity via ICE slopes; segments buildings (High/Moderate/Low).
+  - 01_build_features.py — Leakage-safe features per building: lags (1h, 24h, 168h), rolling means, calendar, global temp z-score, region_id; defines y_next (t+1).
+  - 02_train_models.py — Chronological splits from timestamps; trains Naive, Seasonal-24, Weekly-168, RF, HGBR baselines/models; evaluates on full test set; computes test importance and skill scores.
+  - 02b_shap_analysis.py — SHAP analysis for model interpretability on test sample.
+  - 02c_residual_diagnostics.py — Residual diagnostics (ACF/PACF, heteroscedasticity, prediction intervals) on full test set.
+  - 03_explain_segments.py — Computes per-building temperature elasticity via piecewise ICE slopes; segments buildings (High/Moderate/Low) with uncertainty.
   - 04_make_plots.py — Core figures (feature importance, pred vs actual, residual patterns, heatmaps, usage vs temp).
   - 04a_extra_plots.py — Expanded suite (>30 figs): missingness, distributions, calibration, PDP/ICE, model comparison, timeline of splits, pred-vs-true density and by region, error CDF, clustering, PCA, worst buildings, etc.
-  - 05_render_report.py — Generates LaTeX report (report/paper.tex) integrating methods, results, extended EDA, model comparison, program usage, and conclusions.
   - predict.py — Executable CLI to predict next-hour usage for each building from a usage file (+ optional weather file).
 - data/
   - ausgrid_with_weather_normalized.csv — Example source (NSW).
@@ -39,16 +40,23 @@ Pipeline quickstart
     --lcl data/lcl_with_weather_normalized.parquet \
     --out data/combined_with_weather_normalized.csv
 
-- Build features (leakage-safe, region-aware)
+- Build features (leakage-safe, region-aware, global temp z-score)
   source .venv/bin/activate && python scripts/01_build_features.py \
     --input data/combined_with_weather_normalized.csv \
     --out data/processed/features
 
-- Train models (time-aware)
+- Train models (chronological splits, baselines, full test eval)
   source .venv/bin/activate && python scripts/02_train_models.py \
-    --features data/processed/features.csv
+    --features data/processed/features.csv \
+    --max-train 500000 --max-val 100000 --max-test -1
 
-- Explain and segment vulnerability
+- SHAP analysis (model interpretability)
+  source .venv/bin/activate && python scripts/02b_shap_analysis.py
+
+- Residual diagnostics (ACF/PACF, heteroscedasticity, intervals)
+  source .venv/bin/activate && python scripts/02c_residual_diagnostics.py
+
+- Explain and segment vulnerability (piecewise elasticity)
   source .venv/bin/activate && python scripts/03_explain_segments.py
 
 - Generate figures (base + extended)

@@ -39,12 +39,12 @@ import matplotlib.pyplot as plt
 CANDIDATE_FEATURES = [
     "lag_1h", "lag_24h", "rollmean_24h",
     "hour", "day_of_week", "month",
-    "apparent_temperature_norm", "temp_lag_1h", "temp_lag_24h",
+    "temp_z", "temp_z_lag_1h", "temp_z_lag_24h",
     "precipitation",
     "is_day", "is_weekend", "is_holiday",
     "region_id"
 ]
-TEMP_COL = "apparent_temperature_norm"
+TEMP_COL = "temp_z"
 
 
 def ensure_dirs():
@@ -113,34 +113,65 @@ def collect_test_samples(features_csv: str,
     return out
 
 
-def compute_building_elasticity(model, df_bld: pd.DataFrame,
+def compute_building_elasticity(model,
+                                df_bld: pd.DataFrame,
                                 feature_cols: List[str],
                                 temp_col: str,
-                                grid: np.ndarray) -> float:
+                                grid: np.ndarray) -> Dict[str, float]:
     """
-    Compute median slope dy/dtemp for a building using per-row ICE linear slope.
+    Compute simple elasticity metrics per building on a temperature grid:
+    - elasticity: median slope over full grid (overall)
+    - elasticity_cool: median slope on grid below building median temperature (cool side)
+    - elasticity_heat: median slope on grid above building median temperature (heat side)
+    Keep implementation straightforward and well-commented.
     """
-    if df_bld.empty:
-        return np.nan
+    if df_bld.empty or temp_col not in df_bld.columns:
+        return {"elasticity": np.nan, "elasticity_cool": np.nan, "elasticity_heat": np.nan}
 
-    X_base = df_bld[feature_cols].to_numpy(dtype=np.float32)
+    X_base = df_bld[feature_cols].dropna().to_numpy(dtype=np.float32)
+    if X_base.size == 0:
+        return {"elasticity": np.nan, "elasticity_cool": np.nan, "elasticity_heat": np.nan}
+
     temp_idx = feature_cols.index(temp_col)
-    slopes = []
+    # Split grid around the building's typical temperature (median)
+    med_t = float(df_bld[temp_col].median(skipna=True)) if df_bld[temp_col].notna().any() else 0.0
+    grid_cool = grid[grid <= med_t]
+    grid_heat = grid[grid >= med_t]
+    if grid_cool.size < 2:
+        grid_cool = grid[: max(2, grid.size // 2)]
+    if grid_heat.size < 2:
+        grid_heat = grid[-max(2, grid.size // 2):]
 
-    # For each row, predict across temperature grid and fit a line y ~ temp
+    slopes_all = []
+    slopes_cool = []
+    slopes_heat = []
+
     for i in range(X_base.shape[0]):
         row = X_base[i].copy()
-        X_grid = np.tile(row, (grid.size, 1))
-        X_grid[:, temp_idx] = grid
-        # Predict
-        yhat = model.predict(X_grid)
-        # Robust linear fit slope
-        slope = np.polyfit(grid, yhat, deg=1)[0]
-        slopes.append(slope)
 
-    if len(slopes) == 0:
-        return np.nan
-    return float(np.median(slopes))
+        # Predict across the full grid
+        Xg = np.tile(row, (grid.size, 1))
+        Xg[:, temp_idx] = grid
+        yhat = model.predict(Xg)
+        slopes_all.append(np.polyfit(grid, yhat, deg=1)[0])
+
+        # Cool-side slope
+        Xc = np.tile(row, (grid_cool.size, 1))
+        Xc[:, temp_idx] = grid_cool
+        yhat_c = model.predict(Xc)
+        slopes_cool.append(np.polyfit(grid_cool, yhat_c, deg=1)[0])
+
+        # Heat-side slope
+        Xh = np.tile(row, (grid_heat.size, 1))
+        Xh[:, temp_idx] = grid_heat
+        yhat_h = model.predict(Xh)
+        slopes_heat.append(np.polyfit(grid_heat, yhat_h, deg=1)[0])
+
+    return {
+        "elasticity": float(np.median(slopes_all)) if slopes_all else np.nan,
+        "elasticity_cool": float(np.median(slopes_cool)) if slopes_cool else np.nan,
+        "elasticity_heat": float(np.median(slopes_heat)) if slopes_heat else np.nan,
+    }
 
 
 def segment_scores(scores: pd.Series) -> pd.Series:
@@ -189,13 +220,30 @@ def main():
     n_bld = len(samples)
     print(f"Collected test samples for {n_bld} buildings")
 
-    # Temperature grid in [0,1]
-    grid = np.linspace(0.0, 1.0, num=max(3, args.grid_points), dtype=np.float32)
+    # Temperature grid based on observed temp_z in test samples (p5..p95)
+    all_t = []
+    for dfb in samples.values():
+        if TEMP_COL in dfb.columns:
+            all_t.append(dfb[TEMP_COL].dropna().to_numpy())
+    if all_t:
+        arr = np.concatenate(all_t)
+        lo, hi = np.nanpercentile(arr, [5, 95])
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+            lo, hi = -3.0, 3.0
+    else:
+        lo, hi = -3.0, 3.0
+    grid = np.linspace(lo, hi, num=max(3, args.grid_points), dtype=np.float32)
 
     results = []
     for bld, dfb in samples.items():
-        elast = compute_building_elasticity(model, dfb, feature_cols, TEMP_COL, grid)
-        results.append({"building_name": bld, "elasticity": elast, "n_rows_used": int(len(dfb))})
+        metrics = compute_building_elasticity(model, dfb, feature_cols, TEMP_COL, grid)
+        results.append({
+            "building_name": bld,
+            "elasticity": metrics.get("elasticity"),
+            "elasticity_cool": metrics.get("elasticity_cool"),
+            "elasticity_heat": metrics.get("elasticity_heat"),
+            "n_rows_used": int(len(dfb))
+        })
 
     res_df = pd.DataFrame(results)
     res_df.sort_values("elasticity", inplace=True, na_position="last")

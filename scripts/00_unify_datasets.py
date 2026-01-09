@@ -106,15 +106,23 @@ def standardize_frame(df: pd.DataFrame, region: str) -> pd.DataFrame:
     else:
         raise ValueError("No usage column found (expected usage_kwh_norm or usage_kwh).")
 
-    # weather: apparent_temperature_norm (or normalize)
+    # weather: apparent_temperature (keep raw, add norm for legacy if needed)
     atn_col = pick_first(df, ["apparent_temperature_norm", "normalized_temperature", "temperature_norm", "temp_norm"])
+    at_col = pick_first(df, ["apparent_temperature", "temperature", "temp"])
     if atn_col is not None:
         df["apparent_temperature_norm"] = pd.to_numeric(df[atn_col], errors="coerce")
+        # If we have norm but no raw, try to infer raw (assumes min-max 0-1)
+        if at_col is None:
+            # Cannot reliably invert; keep as-is and note
+            df["apparent_temperature"] = pd.NA
+        else:
+            df["apparent_temperature"] = pd.to_numeric(df[at_col], errors="coerce")
     else:
-        at_col = pick_first(df, ["apparent_temperature"])
         if at_col is None:
             raise ValueError("No temperature column found (apparent_temperature_norm or apparent_temperature).")
-        df["apparent_temperature_norm"] = min_max_normalize(pd.to_numeric(df[at_col], errors="coerce"))
+        # Keep raw temperature; normalization not required here (temp_z computed later)
+        df["apparent_temperature"] = pd.to_numeric(df[at_col], errors="coerce")
+        # Do not create apparent_temperature_norm here; downstream uses temp_z
 
     # precipitation (optional)
     pr_col = pick_first(df, ["precipitation", "rain", "precip"])
@@ -157,12 +165,14 @@ def standardize_frame(df: pd.DataFrame, region: str) -> pd.DataFrame:
                 hol = holidays.GB(years=sorted(set(df["full_timestamp"].dt.year.tolist())))
             df["is_holiday"] = dates.isin(set(hol.keys())).astype(np.int8)
 
-    # Final cleaning: drop rows without weather or usage
-    df = df.dropna(subset=["usage_kwh_norm", "apparent_temperature_norm"]).copy()
+    # Final cleaning: drop rows without usage or temperature (raw or normalized)
+    temp_filter_col = "apparent_temperature" if "apparent_temperature" in df.columns else "apparent_temperature_norm"
+    df = df.dropna(subset=["usage_kwh_norm", temp_filter_col]).copy()
 
-    # Clip normalized fields to [0,1] just in case
+    # Clip normalized usage to [0,1]; temperature z-score computed later
     df["usage_kwh_norm"] = df["usage_kwh_norm"].clip(0.0, 1.0)
-    df["apparent_temperature_norm"] = df["apparent_temperature_norm"].clip(0.0, 1.0)
+    if "apparent_temperature_norm" in df.columns:
+        df["apparent_temperature_norm"] = df["apparent_temperature_norm"].clip(0.0, 1.0)
 
     # Attach region
     df["region"] = region

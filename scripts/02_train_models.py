@@ -49,57 +49,36 @@ def ensure_dirs():
     Path("outputs/figures").mkdir(parents=True, exist_ok=True)
 
 
-def reservoir_time_cutoffs(path: str,
-                           train_frac: float = 0.8,
-                           val_frac: float = 0.1,
-                           sample_size: int = 2_000_000,
-                           chunksize: int = 1_000_000) -> Tuple[pd.Timestamp, pd.Timestamp]:
+def chronological_time_cutoffs(path: str,
+                               train_frac: float = 0.8,
+                               val_frac: float = 0.1,
+                               chunksize: int = 1_000_000) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
-    Compute approximate time cutoffs (t_train_end, t_val_end) using reservoir sampling
-    over the full_timestamp column to estimate the 80th and 90th percentiles.
-    Robust implementation with a fixed-size reservoir to avoid index errors.
+    Compute exact chronological time cutoffs (t_train_end, t_val_end) using percentiles
+    over the sorted full_timestamp column.
     """
-    print(f"Estimating time cutoffs from {path} using reservoir sampling...")
-    k = int(sample_size)
-    if k <= 0:
-        raise ValueError("sample_size must be positive")
+    print(f"Computing exact chronological cutoffs from {path}...")
 
-    # Fixed-size reservoir and counters
-    reservoir = np.empty(k, dtype="int64")
-    filled = 0
-    seen = 0
-
+    # Collect all timestamps (sorted)
+    all_ts = []
     usecols = ["full_timestamp"]
     for chunk in pd.read_csv(path, usecols=usecols, parse_dates=["full_timestamp"],
                              chunksize=chunksize, low_memory=False):
-        ts = chunk["full_timestamp"].dropna().astype("int64").to_numpy()  # ns since epoch
-        if ts.size == 0:
-            continue
+        ts = chunk["full_timestamp"].dropna()
+        all_ts.extend(ts.tolist())
 
-        for v in ts:
-            if filled < k:
-                reservoir[filled] = v
-                filled += 1
-                seen += 1
-                continue
-
-            seen += 1
-            # Draw j in [0, seen-1]; replace if j < k
-            j = int(RNG.integers(0, seen))
-            if j < k:
-                reservoir[j] = v
-
-    # Use only the filled part (in case dataset smaller than k)
-    if filled == 0:
+    if not all_ts:
         raise RuntimeError("No timestamps found to compute cutoffs.")
 
-    sample = reservoir[:filled]
-    # Compute quantiles
-    q80 = np.quantile(sample, train_frac)
-    q90 = np.quantile(sample, train_frac + val_frac)
-    t_train_end = pd.to_datetime(int(q80))
-    t_val_end = pd.to_datetime(int(q90))
-    print(f"Estimated cutoffs: train_end={t_train_end}, val_end={t_val_end}")
+    all_ts.sort()
+    n = len(all_ts)
+    train_end_idx = int(train_frac * n)
+    val_end_idx = int((train_frac + val_frac) * n)
+
+    t_train_end = all_ts[train_end_idx]
+    t_val_end = all_ts[val_end_idx]
+
+    print(f"Exact cutoffs: train_end={t_train_end}, val_end={t_val_end} (n={n:,})")
     return t_train_end, t_val_end
 
 
@@ -134,20 +113,24 @@ def collect_split_samples(path: str,
         mask_test = ts > t_val_end
 
         for split, mask in (("train", mask_train), ("val", mask_val), ("test", mask_test)):
-            need = max_rows.get(split, 0) - got[split]
-            if need <= 0:
-                continue
             sub = chunk.loc[mask, :]
             if sub.empty:
                 continue
-            if len(sub) > need:
-                # random sample to fill the remainder
-                sub = sub.sample(n=need, random_state=42)
+            cap = max_rows.get(split, 0)
+            if cap and cap > 0:
+                need = cap - got[split]
+                if need <= 0:
+                    continue
+                if len(sub) > need:
+                    # random sample to fill the remainder
+                    sub = sub.sample(n=need, random_state=42)
+            # For cap <= 0 treat as unlimited: append all rows
             out[split].append(sub)
             got[split] += len(sub)
 
-        # stop early if all filled
-        if all(got[s] >= max_rows.get(s, 0) for s in got):
+        # stop early only when all capped splits are filled
+        capped = [s for s in got if max_rows.get(s, 0) and max_rows.get(s, 0) > 0]
+        if capped and all(got[s] >= max_rows.get(s, 0) for s in capped):
             break
 
     # Concatenate
@@ -199,8 +182,9 @@ def main():
     # Define features (detected from header to be robust to optional columns)
     header = pd.read_csv(features_path, nrows=0).columns.tolist()
     candidate_features = [
-        "lag_1h", "lag_24h", "rollmean_24h",
+        "lag_1h", "lag_24h", "lag_168h", "rollmean_24h",
         "hour", "day_of_week", "month",
+        "temp_z", "temp_z_lag_1h", "temp_z_lag_24h",  # Prioritize temp_z
         "apparent_temperature_norm", "temp_lag_1h", "temp_lag_24h",
         "precipitation",
         "is_day", "is_weekend", "is_holiday",
@@ -212,8 +196,8 @@ def main():
     keep_extra.append("full_timestamp")
 
     # Estimate time cutoffs
-    t_train_end, t_val_end = reservoir_time_cutoffs(
-        features_path, train_frac=0.8, val_frac=0.1, sample_size=args.sample_size, chunksize=args.chunksize
+    t_train_end, t_val_end = chronological_time_cutoffs(
+        features_path, train_frac=0.8, val_frac=0.1, chunksize=args.chunksize
     )
 
     # Collect split samples
@@ -233,21 +217,40 @@ def main():
             df, cols_float=float_present, cols_int=int_present
         )
 
-    # Baseline 0: Naive (y_hat = lag_1h)
-    metrics = {"cutoffs": {"train_end": str(t_train_end), "val_end": str(t_val_end)}, "Naive": {}, "RF": {}, "HGBR": {}}
+    # Baselines: Naive (lag_1h), Seasonal-24 (lag_24h), Weekly-168 (lag_168h)
+    metrics = {"cutoffs": {"train_end": str(t_train_end), "val_end": str(t_val_end)}, "Naive": {}, "Seasonal-24": {}, "Weekly-168": {}, "RF": {}, "HGBR": {}}
 
     for split in ("val", "test"):
         df = splits[split]
         if len(df) == 0:
-            metrics["Naive"][split] = {"MAE": None, "RMSE": None}
+            for baseline in ["Naive", "Seasonal-24", "Weekly-168"]:
+                metrics[baseline][split] = {"MAE": None, "RMSE": None}
             continue
         y_true = df[target_col].to_numpy()
+
+        # Naive (lag_1h)
         if "lag_1h" in df.columns:
             y_pred_naive = df["lag_1h"].to_numpy()
             metrics["Naive"][split] = evaluate_split(y_true, y_pred_naive)
         else:
             metrics["Naive"][split] = {"MAE": None, "RMSE": None}
         print(f"Naive {split}: {metrics['Naive'][split]}")
+
+        # Seasonal-24 (lag_24h)
+        if "lag_24h" in df.columns:
+            y_pred_seasonal = df["lag_24h"].to_numpy()
+            metrics["Seasonal-24"][split] = evaluate_split(y_true, y_pred_seasonal)
+        else:
+            metrics["Seasonal-24"][split] = {"MAE": None, "RMSE": None}
+        print(f"Seasonal-24 {split}: {metrics['Seasonal-24'][split]}")
+
+        # Weekly-168 (lag_168h)
+        if "lag_168h" in df.columns:
+            y_pred_weekly = df["lag_168h"].to_numpy()
+            metrics["Weekly-168"][split] = evaluate_split(y_true, y_pred_weekly)
+        else:
+            metrics["Weekly-168"][split] = {"MAE": None, "RMSE": None}
+        print(f"Weekly-168 {split}: {metrics['Weekly-168'][split]}")
 
     # Train RandomForestRegressor
     feat_X = feature_cols
@@ -301,6 +304,19 @@ def main():
         metrics["HGBR"][split] = evaluate_split(y, y_pred)
         print(f"HGBR {split}: {metrics['HGBR'][split]}")
 
+    # Compute skill scores
+    def compute_skill_scores(metrics_dict):
+        for split in ("val", "test"):
+            naive_mae = metrics_dict.get("Naive", {}).get(split, {}).get("MAE")
+            if naive_mae and naive_mae > 0:
+                for model in ["RF", "HGBR"]:
+                    model_mae = metrics_dict.get(model, {}).get(split, {}).get("MAE")
+                    if model_mae is not None:
+                        skill = 1.0 - (model_mae / naive_mae)
+                        metrics_dict[model][split]["Skill"] = float(skill)
+
+    compute_skill_scores(metrics)
+
     # Permutation importance on validation (HGBR)
     df_val = splits["val"]
     if len(df_val) > 0:
@@ -319,6 +335,24 @@ def main():
         imp_df.sort_values("importance_mean", ascending=False, inplace=True)
         imp_df.to_csv("outputs/tables/feature_importance_permutation_val.csv", index=False)
         print("Wrote outputs/tables/feature_importance_permutation_val.csv")
+
+    # Permutation importance on test (HGBR)
+    df_test = splits["test"]
+    if len(df_test) > 0:
+        Xte = df_test[feat_X].to_numpy(dtype=np.float32)
+        yte = df_test[target_col].to_numpy(dtype=np.float32)
+        print("Computing permutation importance on test (HGBR, n_repeats=3, single-threaded)...")
+        pi_test = permutation_importance(
+            hgbr, Xte, yte,
+            n_repeats=3,
+            random_state=42,
+            scoring="neg_mean_absolute_error",
+            n_jobs=1
+        )
+        imp_test_df = pd.DataFrame({"feature": feat_X, "importance_mean": pi_test.importances_mean, "importance_std": pi_test.importances_std})
+        imp_test_df.sort_values("importance_mean", ascending=False, inplace=True)
+        imp_test_df.to_csv("outputs/tables/feature_importance_permutation_test.csv", index=False)
+        print("Wrote outputs/tables/feature_importance_permutation_test.csv")
 
     # Per-building MAE on test for best model (choose best by Val MAE)
     def pick_best_model(val_scores: Dict[str, Dict[str, float]]) -> str:
