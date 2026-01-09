@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-Compute SHAP analysis for model interpretability on a stratified sample of test data.
-
 Inputs:
-- outputs/models/hgbr.joblib or outputs/models/rf.joblib (best model)
-- outputs/metrics/metrics.json (to determine best model)
-- data/processed/features.csv (for test data sampling)
+- outputs/models/hgbr.joblib or outputs/models/rf.joblib
+- outputs/metrics/metrics.json
+- data/processed/features.csv
 
 Outputs:
 - outputs/figures/shap_summary.png (beeswarm plot)
 - outputs/figures/shap_waterfall_example.png (individual prediction explanation)
 - outputs/tables/shap_importance_summary.csv
-
-SHAP provides feature attributions for individual predictions, complementing global permutation importance.
 """
 
 import argparse
@@ -60,7 +56,6 @@ def sample_test_data(features_csv: str, metrics_path: str, sample_size: int = 10
 
     t_val_end = pd.to_datetime(metrics["cutoffs"]["val_end"])
 
-    # Define features
     header = pd.read_csv(features_csv, nrows=0).columns.tolist()
     candidate_features = [
         "lag_1h", "lag_24h", "lag_168h", "rollmean_24h",
@@ -73,7 +68,7 @@ def sample_test_data(features_csv: str, metrics_path: str, sample_size: int = 10
     target_col = "y_next"
     keep_cols = ["building_name", "full_timestamp", target_col] + feature_cols
 
-    # Collect test data
+    # Collecting test data
     test_data = []
     for chunk in pd.read_csv(features_csv, usecols=keep_cols, parse_dates=["full_timestamp"],
                              chunksize=chunksize, low_memory=False):
@@ -86,7 +81,7 @@ def sample_test_data(features_csv: str, metrics_path: str, sample_size: int = 10
 
     df_test = pd.concat(test_data, ignore_index=True)
 
-    # Stratified sample by building if possible
+    # Stratified sample by building
     if len(df_test) <= sample_size:
         return df_test
 
@@ -140,10 +135,10 @@ def main():
 
     X_sample = df_sample[feature_cols].to_numpy(dtype=np.float32)
 
-    # Create SHAP explainer (new API for compatibility with recent shap versions)
+    # Creating SHAP explainer
     explainer = shap.Explainer(model)
 
-    # Compute SHAP values (sample for speed if large)
+    # Computing SHAP values
     if len(X_sample) > 5000:
         idx = np.random.choice(len(X_sample), size=5000, replace=False)
         X_shap = X_sample[idx]
@@ -172,7 +167,7 @@ def main():
         plt.close()
         print("Wrote outputs/figures/shap_waterfall_example.png")
 
-    # Save importance summary
+    # Importance summary
     mean_abs_shap = np.abs(shap_values).mean(axis=0)
     importance_df = pd.DataFrame({
         "feature": feature_cols,

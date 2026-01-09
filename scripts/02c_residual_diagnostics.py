@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
 """
-Compute residual diagnostics and optional prediction intervals on test data.
 
 Inputs:
-- outputs/models/hgbr.joblib or outputs/models/rf.joblib (best model)
-- outputs/metrics/metrics.json (to determine best model and cutoffs)
-- data/processed/features.csv (for full test evaluation)
+- outputs/models/hgbr.joblib or outputs/models/rf.joblib
+- outputs/metrics/metrics.json
+- data/processed/features.csv
 
 Outputs:
-- outputs/figures/residual_acf.png (autocorrelation of residuals)
-- outputs/figures/residual_pacf.png (partial autocorrelation)
-- outputs/figures/residuals_vs_fitted.png (heteroscedasticity check)
-- outputs/metrics/interval_coverage.json (optional prediction intervals)
-
-Uses a sample of the test set to reduce computation time.
+- outputs/figures/residuals_vs_fitted.png
 """
 
 import argparse
 import json
 import random
 from pathlib import Path
-from statsmodels.tsa.stattools import acf, pacf
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from statsmodels.stats.diagnostic import acorr_ljungbox
 
 import joblib
 import numpy as np
@@ -103,24 +94,6 @@ def stream_test_predictions(features_csv: str, model, feature_cols: list, metric
     return res, y_pred, df_test["full_timestamp"].tolist()
 
 
-def plot_residual_acf_pacf(residuals: np.ndarray):
-    """Plot ACF and PACF of residuals."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-    # ACF
-    plot_acf(residuals, ax=ax1, lags=50, title="Residual Autocorrelation")
-    ax1.set_xlabel("Lag")
-    ax1.set_ylabel("Autocorrelation")
-
-    # PACF
-    plot_pacf(residuals, ax=ax2, lags=50, title="Residual Partial Autocorrelation")
-    ax2.set_xlabel("Lag")
-    ax2.set_ylabel("Partial Autocorrelation")
-
-    plt.tight_layout()
-    plt.savefig("outputs/figures/residual_acf_pacf.png", dpi=150)
-    plt.close()
-    print("Wrote outputs/figures/residual_acf_pacf.png")
 
 
 def plot_residuals_vs_fitted(residuals: np.ndarray, fitted: np.ndarray):
@@ -137,51 +110,8 @@ def plot_residuals_vs_fitted(residuals: np.ndarray, fitted: np.ndarray):
     print("Wrote outputs/figures/residuals_vs_fitted.png")
 
 
-def compute_prediction_intervals(residuals: np.ndarray, fitted: np.ndarray, coverage_levels: list = [0.8, 0.95]) -> dict:
-    """
-    Compute empirical prediction intervals based on residual distribution.
-    """
-    intervals = {}
-
-    for level in coverage_levels:
-        alpha = 1 - level
-        lower_quantile = alpha / 2
-        upper_quantile = 1 - alpha / 2
-
-        # Assume homoscedastic for simplicity; could stratify by fitted value bins
-        res_std = np.std(residuals)
-        res_median = np.median(residuals)
-
-        # Symmetric intervals around prediction
-        half_width = res_std * 1.96 if level == 0.95 else res_std * 1.28  # approx for 80%
-
-        intervals[f"{int(level*100)}%"] = {
-            "half_width": float(half_width),
-            "method": "empirical_residual_std"
-        }
-
-    # Coverage check (if we had true intervals, but here we just report the width)
-    with open("outputs/metrics/interval_coverage.json", "w") as f:
-        json.dump(intervals, f, indent=2)
-    print("Wrote outputs/metrics/interval_coverage.json")
-
-    return intervals
 
 
-def ljung_box_test(residuals: np.ndarray, lags: int = 24) -> dict:
-    """
-    Run Ljung-Box test up to the given lag and save results to outputs/metrics/ljung_box.json.
-    Returns a dict keyed by lag with lb_stat and lb_pvalue.
-    """
-    lb_df = acorr_ljungbox(residuals, lags=lags, return_df=True)
-    result = {}
-    for i, row in lb_df.iterrows():
-        lag = int(i)
-        result[str(lag)] = {"lb_stat": float(row["lb_stat"]), "lb_pvalue": float(row["lb_pvalue"])}
-    with open("outputs/metrics/ljung_box.json", "w") as f:
-        json.dump(result, f, indent=2)
-    print("Wrote outputs/metrics/ljung_box.json")
-    return result
 
 
 def main():
@@ -218,22 +148,11 @@ def main():
         print("No test data found, skipping diagnostics")
         return
 
-    # ACF/PACF plots
-    plot_residual_acf_pacf(residuals)
-
     # Residuals vs fitted
     plot_residuals_vs_fitted(residuals, fitted)
 
-    # Ljung-Box test (up to 24 lags by default)
-    lb = ljung_box_test(residuals, lags=min(args.max_lag, 24))
-
-    # Optional prediction intervals
-    intervals = compute_prediction_intervals(residuals, fitted)
-
     print("Residual diagnostics complete")
-    print(f"Ljung-Box(1..{min(args.max_lag, 24)}) results written to outputs/metrics/ljung_box.json")
 
 
 if __name__ == "__main__":
     main()
-

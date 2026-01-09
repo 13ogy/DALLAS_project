@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate evaluation and EDA plots from produced artifacts.
-
 Inputs:
 - outputs/tables/feature_importance_permutation_val.csv
 - outputs/tables/preds_sample_test.csv
 - data/processed/features.csv
-
-Outputs (in outputs/figures/):
-- feature_importance_bar.png
-- pred_vs_actual_scatter.png
-- pred_vs_actual_timeseries.png
-- residual_by_hour.png
-- error_heatmap_hour_month.png
-- usage_vs_temp_scatter.png
 """
 
 from pathlib import Path
@@ -107,7 +97,6 @@ def preds_based_plots():
     plt.close()
     print(f"Wrote {out3}")
 
-    # Predicted vs Actual time series for 3 buildings
     # Pick top-3 buildings by count in sample
     top_blds = df["building_name"].value_counts().head(3).index.tolist()
     plt.figure(figsize=(10, 6))
@@ -132,53 +121,10 @@ def preds_based_plots():
     print(f"Wrote {out4}")
 
 
-def usage_vs_temp_scatter(max_points: int = 100_000, chunksize: int = 500_000):
-    """
-    Build a usage vs temperature (z-score) scatter from features.csv without loading full file.
-    Keeps it simple: random subsample and clear labels.
-    """
-    if not DATA_FEATURES.exists():
-        print(f"Skip usage_vs_temp_scatter: {DATA_FEATURES} not found")
-        return
-
-    used = 0
-    parts = []
-    usecols = ["usage_pb", "temp_z"]
-    for chunk in pd.read_csv(DATA_FEATURES, usecols=usecols, chunksize=chunksize, low_memory=False):
-        chunk = chunk.dropna(subset=usecols)
-        if chunk.empty:
-            continue
-        need = max_points - used
-        if need <= 0:
-            break
-        take = min(need, len(chunk))
-        parts.append(chunk.sample(n=take, random_state=42))
-        used += take
-        if used >= max_points:
-            break
-
-    if not parts:
-        print("Skip usage_vs_temp_scatter: no data assembled")
-        return
-
-    df = pd.concat(parts, ignore_index=True)
-    plt.figure(figsize=(6, 5))
-    plt.scatter(df["temp_z"], df["usage_pb"], s=4, alpha=0.15, color="#9467bd", edgecolors="none")
-    plt.xlabel("Temperature (z-score)")
-    plt.ylabel("Usage (per-building norm)")
-    plt.title("Usage vs Temperature (z-score, subsample)")
-    plt.tight_layout()
-    out = FIG_DIR / "usage_vs_temp_scatter.png"
-    plt.savefig(out, dpi=150)
-    plt.close()
-    print(f"Wrote {out}")
-
-
 def main():
     ensure_dirs()
     feature_importance_bar()
     preds_based_plots()
-    usage_vs_temp_scatter()
 
 
 if __name__ == "__main__":

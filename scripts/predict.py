@@ -1,39 +1,5 @@
 #!/usr/bin/env python3
 """
-Predict next-hour usage per building from an input usage file and region.
-
-Usage examples:
-  python3 scripts/predict.py --input data/ausgrid_with_weather_normalized.csv --region NSW
-  python3 scripts/predict.py --input my_usage.csv --region LCL --weather my_weather.csv
-  python3 scripts/predict.py --input my_usage.parquet --region NSW --model outputs/models/hgbr.joblib
-
-Inputs:
-- --input: CSV or Parquet with at least:
-    - building_name (str)
-    - full_timestamp (datetime, any minute; we will floor to hour)
-    - usage_kwh_norm OR usage_kwh
-    - Optional: apparent_temperature_norm OR apparent_temperature, precipitation, is_day, is_weekend, is_holiday
-- --region: Region label for all rows if region column is missing (NSW or LCL)
-- --weather: Optional CSV with hourly weather to merge if input lacks weather.
-    The script expects columns (case-insensitive/fuzzy):
-      - time or full_timestamp
-      - apparent_temperature_norm (preferred) or apparent_temperature (we normalize)
-      - precipitation (optional)
-      - is_day (optional)
-    Weather is aggregated to one row per hour and merged by floored hour.
-- --model: Optional explicit model path. If not provided, the script will:
-    1) Inspect outputs/metrics/metrics.json to decide HGBR vs RF
-    2) Load the respective joblib file from outputs/models/
-- --out: Output CSV path (default: outputs/tables/predictions_next_hour.csv)
-
-Behavior:
-- Computes leakage-safe features from the input history per building:
-  lag_1h, lag_24h, rollmean_24h (24-hour mean excluding current hour),
-  calendar fields, weather, flags, and region_id.
-- Uses the most recent hour (per building) as feature row to predict y_next at t+1.
-- If a required feature is unavailable for a building (e.g., insufficient history),
-  that building is skipped and reported.
-
 Outputs:
 - CSV with columns: building_name, timestamp_last, timestamp_next, y_pred_next, and features used for audit.
 """
@@ -46,9 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
 import joblib
-
 
 # -------------------------- Utilities -------------------------- #
 
@@ -158,15 +122,14 @@ def derive_flags(df: pd.DataFrame, region: str) -> pd.DataFrame:
 
 
 def region_to_id(region: str) -> int:
-    # Stabilize mapping consistent with sorted(["LCL","NSW"]) => {"LCL":0,"NSW":1}
     return 0 if region.upper() == "LCL" else 1
 
 
 def load_best_model_and_feature_order(explicit_model: Optional[str]) -> Tuple[object, List[str]]:
     """
-    Decide which model to load and what feature order to use.
+    Decides which model to load and what feature order to use.
     Feature order priority:
-      1) outputs/tables/feature_importance_permutation_val.csv (column 'feature' in file order)
+      1) outputs/tables/feature_importance_permutation_val.csv
       2) fallback to candidate feature list
     """
     # Decide model
@@ -188,7 +151,8 @@ def load_best_model_and_feature_order(explicit_model: Optional[str]) -> Tuple[ob
                     best = "rf"
             except Exception:
                 best = None
-        # Fallback: prefer HGBR if present, else RF
+
+        # Fallback for models
         if best is None:
             if Path("outputs/models/hgbr.joblib").exists():
                 best = "hgbr"
@@ -211,7 +175,7 @@ def load_best_model_and_feature_order(explicit_model: Optional[str]) -> Tuple[ob
         except Exception:
             pass
 
-    # Fallback candidate order (same as training candidate list)
+    # Fallback candidate order
     candidate_features = [
         "lag_1h", "lag_24h", "rollmean_24h",
         "hour", "day_of_week", "month",
@@ -257,21 +221,20 @@ def build_features_for_prediction(
         df["usage_kwh_norm"] = pd.to_numeric(df[usage_norm_col], errors="coerce")
     elif usage_kwh_col is not None:
         tmp = pd.to_numeric(df[usage_kwh_col], errors="coerce")
-        # global normalize (compat); per-building renorm next
+
+        # global normalization
         mn, mx = tmp.min(), tmp.max()
         denom = max(mx - mn, 1e-6)
         df["usage_kwh_norm"] = (tmp - mn) / denom
     else:
         raise ValueError("Input must contain usage_kwh_norm or usage_kwh.")
 
-    # Weather presence?
+    # Weather presence verification
     atn_in_input = pick_first(cols, ["apparent_temperature_norm"]) is not None
     pr_in_input = pick_first(cols, ["precipitation", "precip", "rain"]) is not None
     day_in_input = pick_first(cols, ["is_day"]) is not None
 
     if not atn_in_input and weather_df is None:
-        # Cannot run model without weather. Provide a conservative fallback.
-        # We set apparent_temperature_norm=0.5 (mid), precipitation=0.0, derive is_day.
         print("Warning: No weather found in input and no --weather provided. Using fallback values.")
         df["apparent_temperature_norm"] = 0.5
         df["precipitation"] = 0.0
@@ -413,7 +376,8 @@ def main():
     out_cols = ["building_name", "timestamp_last", "timestamp_next"]
     out_df = feats.copy()
     out_df["y_pred_next"] = yhat.astype(np.float32)
-    # Keep a compact audit: features used (optional; can be large)
+
+    # Keeps a compact audit
     audit_cols = feature_order
     out_df = out_df[out_cols + ["y_pred_next"] + audit_cols]
 

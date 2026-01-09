@@ -1,28 +1,12 @@
 #!/usr/bin/env python3
 """
-Compute temperature elasticity per building and segment vulnerability using the trained best model.
-
 Inputs:
-- outputs/metrics/metrics.json  (to get cutoffs and best model)
+- outputs/metrics/metrics.json
 - outputs/models/hgbr.joblib or outputs/models/rf.joblib
-- data/processed/features.csv   (engineered features with y_next)
+- data/processed/features.csv
 
 Outputs:
-- outputs/vulnerability/building_elasticity.csv  (building_name, elasticity, segment, n_rows_used)
-- outputs/figures/elasticity_distribution.png    (histogram of elasticity)
-- outputs/tables/elasticity_summary.json         (high-level stats)
-
-Method:
-- Use the test period defined by metrics.json (full_timestamp > val_end).
-- For each building, sample up to N rows from the test set (default 200).
-- For each sampled row, vary apparent_temperature_norm over a fixed grid [0..1] (11 points),
-  holding other features constant, and predict with the trained model.
-- For that row, estimate slope dy/dtemp via linear fit of predictions vs temperature grid.
-- Building elasticity = median slope across the building's sampled rows.
-- Segment by quantiles: High (top 25%), Moderate (middle 50%), Low (bottom 25%).
-
-Note:
-- Works with the feature set used in training in scripts/02_train_models.py.
+- outputs/figures/elasticity_distribution.png
 """
 
 import argparse
@@ -119,11 +103,7 @@ def compute_building_elasticity(model,
                                 temp_col: str,
                                 grid: np.ndarray) -> Dict[str, float]:
     """
-    Compute simple elasticity metrics per building on a temperature grid:
-    - elasticity: median slope over full grid (overall)
-    - elasticity_cool: median slope on grid below building median temperature (cool side)
-    - elasticity_heat: median slope on grid above building median temperature (heat side)
-    Keep implementation straightforward and well-commented.
+    Computing elasticity metrics per building
     """
     if df_bld.empty or temp_col not in df_bld.columns:
         return {"elasticity": np.nan, "elasticity_cool": np.nan, "elasticity_heat": np.nan}
@@ -248,13 +228,6 @@ def main():
     res_df = pd.DataFrame(results)
     res_df.sort_values("elasticity", inplace=True, na_position="last")
 
-    # Segment
-    res_df["segment"] = segment_scores(res_df["elasticity"])
-
-    # Save CSV
-    out_csv = "outputs/vulnerability/building_elasticity.csv"
-    res_df.to_csv(out_csv, index=False)
-    print(f"Wrote {out_csv}")
 
     # Plot distribution
     fig_path = "outputs/figures/elasticity_distribution.png"
@@ -270,20 +243,6 @@ def main():
     plt.savefig(fig_path, dpi=150)
     plt.close()
     print(f"Wrote {fig_path}")
-
-    # Summary JSON
-    summary = {
-        "n_buildings": int(len(res_df)),
-        "n_with_scores": int(res_df["elasticity"].notna().sum()),
-        "median_elasticity": float(res_df["elasticity"].median(skipna=True)) if len(res_df) else None,
-        "q25_elasticity": float(res_df["elasticity"].quantile(0.25)) if len(res_df) else None,
-        "q75_elasticity": float(res_df["elasticity"].quantile(0.75)) if len(res_df) else None,
-        "segments_count": res_df["segment"].value_counts(dropna=False).to_dict()
-    }
-    with open("outputs/tables/elasticity_summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
-    print("Wrote outputs/tables/elasticity_summary.json")
-    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

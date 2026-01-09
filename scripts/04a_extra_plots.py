@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """
-Produce an expanded suite of diagnostics and EDA plots (>30 figures) for the energy forecasting project.
-
 Inputs:
 - data/processed/features.csv (large; read in chunks with sampling)
 - outputs/tables/preds_sample_test.csv
@@ -10,39 +8,6 @@ Inputs:
 - outputs/vulnerability/building_elasticity.csv
 - outputs/metrics/metrics.json
 - outputs/models/{hgbr.joblib, rf.joblib} (optional for PDP/ICE)
-
-Outputs (examples, not exhaustive; all saved to outputs/figures/):
-- missingness_bar.png
-- missingness_heatmap.png
-- usage_hist_by_region.png
-- usage_violin_by_season.png
-- usage_by_hour_box.png
-- usage_weekend_weekday_violin.png
-- usage_holiday_violin.png
-- usage_heatmap_hour_dow.png
-- usage_heatmap_hour_month.png
-- feature_correlation_heatmap.png
-- residual_vs_temp_bin.png
-- residual_vs_precip_bin.png
-- calibration_plot.png
-- pdp_temperature.png
-- ice_temperature_examples.png
-- pdp_hour.png
-- pdp_precip.png
-- elasticity_by_region_box.png
-- per_building_mae_hist.png
-- per_building_mae_by_region_box.png
-- error_by_season_box.png
-- error_by_temp_bin_region.png
-- error_over_time.png
-- worst_buildings_timeseries.png
-- pca_features_scatter.png
-- cluster_centers_hourly.png
-- pairplot_sample.png
-
-Note:
-- Uses sampling to keep memory/time reasonable.
-- Figures are robust to missing optional columns (skip plot if required columns absent).
 """
 
 from __future__ import annotations
@@ -87,7 +52,7 @@ def load_metrics():
 
 
 def load_best_model():
-    # Prefer HGBR then RF if both exist (as per metrics best)
+    # We choose HGBR then RF if both exist
     try:
         m = json.loads(METRICS_JSON.read_text())
         mae_rf = m.get("RF", {}).get("val", {}).get("MAE", None)
@@ -124,7 +89,6 @@ def sample_features(n_rows: int = 200_000, chunksize: int = 500_000, require_col
     require_cols = require_cols or []
     header = header_features()
     needed = [c for c in require_cols if c in header]
-    # Always include common IDs + a few defaults if present
     base_cols = ["building_name", "full_timestamp", "usage_pb", "hour", "day_of_week", "month", "season", "region", "region_id",
                  "apparent_temperature_norm", "precipitation", "is_day", "is_weekend", "is_holiday"]
     usecols = sorted(set([c for c in base_cols if c in header] + needed))
@@ -134,8 +98,6 @@ def sample_features(n_rows: int = 200_000, chunksize: int = 500_000, require_col
         return pd.DataFrame()
     for chunk in pd.read_csv(DATA_FEATURES, usecols=usecols, parse_dates=["full_timestamp"] if "full_timestamp" in usecols else None,
                              chunksize=chunksize, low_memory=False):
-        # drop na heavy rows only if needed
-        # sample
         take = min(n_rows - used, len(chunk))
         if take <= 0:
             break
@@ -232,15 +194,6 @@ def plots_usage_distributions():
     df = sample_features(n_rows=250_000, require_cols=["usage_pb", "region", "season", "hour"])
     if df.empty or "usage_pb" not in df.columns:
         return
-    # usage hist by region
-    if "region" in df.columns:
-        plt.figure(figsize=(7, 4))
-        for r, g in df.groupby("region"):
-            sns.kdeplot(g["usage_pb"].dropna(), label=str(r), fill=True, alpha=0.2)
-        plt.xlabel("usage_pb")
-        plt.title("Usage distribution by region (KDE, sample)")
-        plt.legend()
-        savefig_simple(FIG_DIR / "usage_hist_by_region.png")
 
     # violin by season
     if "season" in df.columns:
@@ -264,13 +217,6 @@ def plots_usage_distributions():
         plt.title("Usage: Weekend vs Weekday")
         savefig_simple(FIG_DIR / "usage_weekend_weekday_violin.png")
 
-    # holiday vs non-holiday
-    if "is_holiday" in df.columns:
-        plt.figure(figsize=(6, 4))
-        df["holiday_label"] = np.where(df["is_holiday"] == 1, "Holiday", "Non-Holiday")
-        sns.violinplot(data=df, x="holiday_label", y="usage_pb", inner="quartile", scale="width")
-        plt.title("Usage: Holiday vs Non-Holiday")
-        savefig_simple(FIG_DIR / "usage_holiday_violin.png")
 
 
 def plots_usage_heatmaps():
@@ -315,7 +261,6 @@ def plots_residuals_and_calibration():
         return
     preds = pd.read_csv(PREDS_SAMPLE_CSV, parse_dates=["full_timestamp"])
     preds["resid"] = preds["y_true"] - preds["y_pred"]
-    # Join with temp and precip for binning
     require = ["apparent_temperature_norm", "precipitation", "season", "region", "hour"]
     merged = join_preds_with_features(preds.copy(), require_cols=require)
 
@@ -330,18 +275,7 @@ def plots_residuals_and_calibration():
         plt.title("Residual vs Temperature (binned)")
         savefig_simple(FIG_DIR / "residual_vs_temp_bin.png")
 
-    # residual vs precipitation bins
-    if "precipitation" in merged.columns:
-        merged["precip_bin"] = pd.qcut(merged["precipitation"].fillna(0), q=10, duplicates="drop")
-        g = merged.groupby("precip_bin")["resid"].apply(lambda s: s.abs().mean()).reset_index(name="MAE")
-        plt.figure(figsize=(8, 3.5))
-        plt.plot(range(len(g)), g["MAE"], marker="s", color="#1f77b4")
-        plt.xticks(range(len(g)), [str(b) for b in g["precip_bin"]], rotation=45, ha="right")
-        plt.ylabel("Mean Abs Error")
-        plt.title("Residual vs Precipitation (binned)")
-        savefig_simple(FIG_DIR / "residual_vs_precip_bin.png")
-
-    # calibration (pred deciles vs true mean)
+    # calibration
     q = np.quantile(preds["y_pred"], np.linspace(0, 1, 11))
     preds["pred_bin"] = pd.cut(preds["y_pred"], bins=q, include_lowest=True, duplicates="drop")
     cal = preds.groupby("pred_bin").agg(pred_mean=("y_pred", "mean"), true_mean=("y_true", "mean")).reset_index(drop=True)
@@ -361,7 +295,7 @@ def plots_residuals_and_calibration():
         plt.title("Error by season (test sample)")
         savefig_simple(FIG_DIR / "error_by_season_box.png")
 
-    # error by temp bin and region (facet)
+    # error by temp bin and region
     if "temp_bin" in merged.columns and "region" in merged.columns:
         g = merged.groupby(["region", "temp_bin"])["resid"].apply(lambda s: s.abs().mean()).reset_index(name="MAE")
         plt.figure(figsize=(10, 4))
@@ -379,7 +313,7 @@ def plots_residuals_and_calibration():
         plt.close()
         print(f"Wrote {FIG_DIR / 'error_by_temp_bin_region.png'}")
 
-    # error trend over time (weekly)
+    # error trend over time
     ts = preds.copy()
     ts["week"] = ts["full_timestamp"].dt.to_period("W").apply(lambda r: r.start_time)
     g = ts.groupby("week")["resid"].apply(lambda s: s.abs().mean()).reset_index(name="MAE")
@@ -396,7 +330,7 @@ def plots_pdp_ice():
     if model is None:
         return
     header = header_features()
-    # Features used in training (subset)
+    # Features used in training
     candidates = [
         "lag_1h", "lag_24h", "rollmean_24h",
         "hour", "day_of_week", "month",
@@ -407,7 +341,8 @@ def plots_pdp_ice():
     ]
     feat_cols = [c for c in candidates if c in header]
     req_cols = ["full_timestamp", "building_name"] + feat_cols
-    # Take a small sample from test period for ICE
+
+    # Takes a small sample from test period
     val_end = load_metrics()
     parts = []
     got = 0
@@ -426,33 +361,6 @@ def plots_pdp_ice():
         return
     df = pd.concat(parts, ignore_index=True)
 
-    # PDP: temperature
-    if "apparent_temperature_norm" in feat_cols:
-        base = df[feat_cols].median(axis=0).to_numpy(dtype=np.float32)
-        grid = np.linspace(0.0, 1.0, 41, dtype=np.float32)
-        X = np.tile(base, (grid.size, 1))
-        temp_idx = feat_cols.index("apparent_temperature_norm")
-        X[:, temp_idx] = grid
-        y = model.predict(X)
-        plt.figure(figsize=(6, 4))
-        plt.plot(grid, y, color="#d62728")
-        plt.xlabel("apparent_temperature_norm")
-        plt.ylabel("Predicted usage (norm)")
-        plt.title("PDP: Temperature")
-        savefig_simple(FIG_DIR / "pdp_temperature.png")
-
-        # ICE: pick 10 rows
-        ice_rows = df[feat_cols].sample(n=min(10, len(df)), random_state=42).to_numpy(dtype=np.float32)
-        plt.figure(figsize=(6, 4))
-        for row in ice_rows:
-            Xg = np.tile(row, (grid.size, 1))
-            Xg[:, temp_idx] = grid
-            yhat = model.predict(Xg)
-            plt.plot(grid, yhat, alpha=0.4)
-        plt.xlabel("apparent_temperature_norm")
-        plt.ylabel("Predicted usage (norm)")
-        plt.title("ICE: Temperature (10 examples)")
-        savefig_simple(FIG_DIR / "ice_temperature_examples.png")
 
     # PDP: hour
     if "hour" in feat_cols:
@@ -488,18 +396,6 @@ def plots_pdp_ice():
 
 
 def plots_elasticity_and_building_performance():
-    # Elasticity by region (needs mapping)
-    if ELAST_CSV.exists():
-        elast = pd.read_csv(ELAST_CSV)
-        map_df = build_mapping_building_region()
-        if not elast.empty and not map_df.empty:
-            e = elast.merge(map_df, on="building_name", how="left")
-            if "region" in e.columns:
-                plt.figure(figsize=(6, 4))
-                sns.boxplot(data=e, x="region", y="elasticity", showfliers=False)
-                plt.title("Elasticity by region")
-                savefig_simple(FIG_DIR / "elasticity_by_region_box.png")
-
     # Per-building MAE distribution and by region
     if PER_BLD_CSV.exists():
         perf = pd.read_csv(PER_BLD_CSV)
@@ -509,15 +405,6 @@ def plots_elasticity_and_building_performance():
             plt.title("Per-building MAE (test) distribution")
             plt.xlabel("MAE")
             savefig_simple(FIG_DIR / "per_building_mae_hist.png")
-
-            map_df = build_mapping_building_region()
-            if not map_df.empty and "building_name" in perf.columns:
-                m = perf.merge(map_df, on="building_name", how="left")
-                if "region" in m.columns:
-                    plt.figure(figsize=(6, 4))
-                    sns.boxplot(data=m, x="region", y="MAE", showfliers=False)
-                    plt.title("Per-building MAE by region (test)")
-                    savefig_simple(FIG_DIR / "per_building_mae_by_region_box.png")
 
     # Worst buildings time series sample
     if PER_BLD_CSV.exists() and PREDS_SAMPLE_CSV.exists():
@@ -539,27 +426,6 @@ def plots_elasticity_and_building_performance():
 
 
 def plots_pca_and_clusters():
-    # PCA scatter
-    df = sample_features(n_rows=80_000, require_cols=["usage_pb", "hour", "day_of_week", "month", "apparent_temperature_norm", "precipitation", "region_id"])
-    if df.empty:
-        return
-    feats = df.select_dtypes(include=[np.number]).copy()
-    feats = feats.dropna(axis=0)
-    if feats.shape[0] < 100 or feats.shape[1] < 3:
-        return
-    pca = PCA(n_components=2, random_state=42)
-    Z = pca.fit_transform(feats.to_numpy(dtype=np.float32))
-    plt.figure(figsize=(6, 5))
-    if "region_id" in feats.columns:
-        ridx = feats["region_id"].to_numpy()
-        plt.scatter(Z[:, 0], Z[:, 1], c=ridx, s=3, cmap="tab10", alpha=0.3)
-    else:
-        plt.scatter(Z[:, 0], Z[:, 1], s=3, alpha=0.3)
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title("PCA of numeric features (sample)")
-    savefig_simple(FIG_DIR / "pca_features_scatter.png")
-
     # Cluster centers of hourly usage profiles
     df2 = sample_features(n_rows=300_000, require_cols=["usage_pb", "hour", "building_name"])
     if df2.empty or not {"usage_pb", "hour", "building_name"}.issubset(df2.columns):
@@ -581,26 +447,6 @@ def plots_pca_and_clusters():
         savefig_simple(FIG_DIR / "cluster_centers_hourly.png")
     except Exception:
         pass
-
-
-def plot_pairplot_sample():
-    df = sample_features(n_rows=8_000, require_cols=["usage_pb", "apparent_temperature_norm", "precipitation", "hour", "region"])
-    if df.empty:
-        return
-    sub = df.dropna().copy()
-    if sub.shape[0] < 100:
-        return
-    try:
-        g = sns.pairplot(sub[["usage_pb", "apparent_temperature_norm", "precipitation", "hour"]], diag_kind="kde", corner=True)
-        g.fig.suptitle("Pairplot (usage, temp, precip, hour) - sample", y=1.02)
-        g.savefig(FIG_DIR / "pairplot_sample.png", dpi=150)
-        plt.close("all")
-        print(f"Wrote {FIG_DIR / 'pairplot_sample.png'}")
-    except Exception:
-        pass
-
-
-# -------------------- Additional comparative plots -------------------- #
 
 def plot_model_comparison_bar():
     """Bar chart comparing MAE for Naive, RF, HGBR on val/test."""
@@ -664,49 +510,6 @@ def plot_splits_timeline():
         pass
 
 
-def plot_pred_vs_actual_kde():
-    """2D density of pred vs true."""
-    if not PREDS_SAMPLE_CSV.exists():
-        return
-    try:
-        df = pd.read_csv(PREDS_SAMPLE_CSV)
-        if df.empty:
-            return
-        plt.figure(figsize=(5.5, 5.5))
-        sns.kdeplot(x=df["y_true"], y=df["y_pred"], fill=True, cmap="mako")
-        lims = [0, 1]
-        plt.plot(lims, lims, "--", color="k", linewidth=1)
-        plt.xlim(lims); plt.ylim(lims)
-        plt.xlabel("True (y_next)")
-        plt.ylabel("Predicted")
-        plt.title("Predicted vs True (2D density, test sample)")
-        savefig_simple(FIG_DIR / "pred_vs_actual_kde.png")
-    except Exception:
-        pass
-
-
-def plot_pred_vs_actual_by_region():
-    """Compare pred vs true distributions by region."""
-    if not PREDS_SAMPLE_CSV.exists():
-        return
-    preds = pd.read_csv(PREDS_SAMPLE_CSV, parse_dates=["full_timestamp"])
-    map_df = build_mapping_building_region()
-    if map_df.empty:
-        return
-    df = preds.merge(map_df, on="building_name", how="left")
-    if "region" not in df.columns:
-        return
-    plt.figure(figsize=(8, 4))
-    sns.kdeplot(data=df, x="y_true", y="y_pred", hue="region", fill=False, common_norm=False)
-    lims = [0, 1]
-    plt.plot(lims, lims, "--", color="k", linewidth=1)
-    plt.xlim(lims); plt.ylim(lims)
-    plt.xlabel("True (y_next)")
-    plt.ylabel("Predicted")
-    plt.title("Predicted vs True by region (KDE overlays)")
-    savefig_simple(FIG_DIR / "pred_vs_actual_by_region.png")
-
-
 def plot_error_cdf():
     """CDF of absolute error on test sample."""
     if not PREDS_SAMPLE_CSV.exists():
@@ -744,13 +547,8 @@ def main():
     plots_pdp_ice()
     plots_elasticity_and_building_performance()
     plots_pca_and_clusters()
-    plot_pairplot_sample()
-
-    # New comparative suite
     plot_model_comparison_bar()
     plot_splits_timeline()
-    plot_pred_vs_actual_kde()
-    plot_pred_vs_actual_by_region()
     plot_error_cdf()
 
 

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Train baselines and tree models on the single-CSV features with time-aware splits.
-
 Inputs:
-- data/processed/features.csv  (from scripts/01_build_features.py)
+- data/processed/features.csv
 
 Outputs:
 - outputs/models/rf.joblib, outputs/models/hgbr.joblib
@@ -11,15 +9,6 @@ Outputs:
 - outputs/tables/feature_importance_permutation_val.csv
 - outputs/tables/per_building_mae_test.csv
 - outputs/tables/preds_sample_test.csv (small sample for plotting)
-
-Design:
-- Time-aware split via approximate timeline percentiles on full_timestamp (reservoir sampling for cutoffs).
-- Stream the large CSV in chunks; collect up to configurable max rows per split to bound memory.
-- Baseline 0: Naive (predict y_hat = lag_1h).
-- Models: RandomForestRegressor, HistGradientBoostingRegressor (sklearn).
-
-CLI:
-  python3 scripts/02_train_models.py --features data/processed/features.csv --max-train 500000 --max-val 100000 --max-test 100000
 """
 
 from __future__ import annotations
@@ -54,8 +43,7 @@ def chronological_time_cutoffs(path: str,
                                val_frac: float = 0.1,
                                chunksize: int = 1_000_000) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
-    Compute exact chronological time cutoffs (t_train_end, t_val_end) using percentiles
-    over the sorted full_timestamp column.
+    Computes exact chronological time cutoffs.
     """
     print(f"Computing exact chronological cutoffs from {path}...")
 
@@ -91,7 +79,6 @@ def collect_split_samples(path: str,
                           keep_cols_extra: List[str] | None = None,
                           chunksize: int = 500_000) -> Dict[str, pd.DataFrame]:
     """
-    Stream through the CSV once, collecting up to max_rows[split] rows for each split.
     Splits:
       - train: full_timestamp <= t_train_end
       - val: t_train_end < full_timestamp <= t_val_end
@@ -104,9 +91,9 @@ def collect_split_samples(path: str,
 
     for chunk in pd.read_csv(path, usecols=usecols, parse_dates=["full_timestamp"],
                              chunksize=chunksize, low_memory=False):
-        # Drop rows with missing target or key features
+        # Dropping rows with missing target or key features
         chunk = chunk.dropna(subset=[target_col, "lag_1h", "lag_24h", "rollmean_24h"])
-        # Assign split
+        # Assigning split
         ts = chunk["full_timestamp"]
         mask_train = ts <= t_train_end
         mask_val = (ts > t_train_end) & (ts <= t_val_end)
@@ -124,7 +111,7 @@ def collect_split_samples(path: str,
                 if len(sub) > need:
                     # random sample to fill the remainder
                     sub = sub.sample(n=need, random_state=42)
-            # For cap <= 0 treat as unlimited: append all rows
+            # For cap <= 0 we treat it as unlimited: append all rows
             out[split].append(sub)
             got[split] += len(sub)
 
@@ -192,7 +179,7 @@ def main():
     ]
     feature_cols = [c for c in candidate_features if c in header]
     target_col = "y_next"
-    keep_extra = ["building_name"]  # for per-building metrics; also keep timestamp for preds sample
+    keep_extra = ["building_name"]
     keep_extra.append("full_timestamp")
 
     # Estimate time cutoffs
@@ -207,7 +194,6 @@ def main():
         chunksize=args.chunksize
     )
 
-    # Prepare datasets and types
     for split_name, df in splits.items():
         # Downcast floats/ints
         int_candidates = ["hour", "day_of_week", "month", "is_day", "is_weekend", "is_holiday", "region_id"]
@@ -317,13 +303,13 @@ def main():
 
     compute_skill_scores(metrics)
 
-    # Permutation importance on validation (HGBR)
+    # Permutation importance on validation for HGBR
     df_val = splits["val"]
     if len(df_val) > 0:
         Xv = df_val[feat_X].to_numpy(dtype=np.float32)
         yv = df_val[target_col].to_numpy(dtype=np.float32)
         print("Computing permutation importance on validation (HGBR, n_repeats=3, single-threaded)...")
-        # Use single-threaded to avoid joblib/loky resource tracker issues on some Python/macOS combos
+
         pi = permutation_importance(
             hgbr, Xv, yv,
             n_repeats=3,
@@ -336,7 +322,7 @@ def main():
         imp_df.to_csv("outputs/tables/feature_importance_permutation_val.csv", index=False)
         print("Wrote outputs/tables/feature_importance_permutation_val.csv")
 
-    # Permutation importance on test (HGBR)
+    # Permutation importance on test
     df_test = splits["test"]
     if len(df_test) > 0:
         Xte = df_test[feat_X].to_numpy(dtype=np.float32)
@@ -354,9 +340,9 @@ def main():
         imp_test_df.to_csv("outputs/tables/feature_importance_permutation_test.csv", index=False)
         print("Wrote outputs/tables/feature_importance_permutation_test.csv")
 
-    # Per-building MAE on test for best model (choose best by Val MAE)
+    # Per-building MAE on test
     def pick_best_model(val_scores: Dict[str, Dict[str, float]]) -> str:
-        # Compare RF vs HGBR by Val MAE
+        # Comparing RF vs HGBR by Val MAE
         mae_rf = val_scores.get("RF", {}).get("MAE", math.inf)
         mae_hg = val_scores.get("HGBR", {}).get("MAE", math.inf)
         if mae_hg <= mae_rf:
@@ -367,8 +353,6 @@ def main():
     print(f"Best model by Val MAE: {best}")
 
     df_test = splits["test"]
-    per_bld = []
-    preds_sample = []
     if len(df_test) > 0:
         Xte = df_test[feat_X].to_numpy(dtype=np.float32)
         yte = df_test[target_col].to_numpy(dtype=np.float32)
